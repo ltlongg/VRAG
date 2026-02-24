@@ -7,7 +7,7 @@ VRAG is a modular retrieval-augmented system for video question answering over l
 ## Architecture
 
 ```
-Query → Query Decomposition (GPT-4o)
+Query → Query Decomposition (Kimi Coding)
       → Multi-modal Retrieval System
           ├── Semantic Search (CLIP + BLIP-2 + BEiT-3 + InternVL late fusion)
           ├── On-screen Text Search (OCR → BM25)
@@ -46,7 +46,7 @@ VRAG/
 │   ├── reranking/
 │   │   └── reranker.py            # MLLM re-ranking (InternVL2.5-78B)
 │   ├── vqa/
-│   │   ├── query_decomposer.py    # Query decomposition (GPT-4o)
+│   │   ├── query_decomposer.py    # Query decomposition (Kimi Coding)
 │   │   ├── filtering_module.py    # Chunk-level relevance filtering
 │   │   └── answering_module.py    # Answer generation (VideoLLaMA3-7B)
 │   ├── indexing/
@@ -89,9 +89,14 @@ dataset:
   video_dir: "data/videos"
 ```
 
-Set your OpenAI API key for GPT-4o query decomposition:
+Set your Kimi API key for query decomposition:
 ```bash
-set OPENAI_API_KEY=your-api-key-here
+set KIMI_API_KEY=your-api-key-here
+```
+
+Install the Anthropic SDK (Kimi uses an Anthropic-compatible API):
+```bash
+pip install anthropic
 ```
 
 ### 3. Preprocess Videos
@@ -165,7 +170,7 @@ print(result.confidence)
 | Re-ranking | InternVL2.5-78B | 40.5/45 KIS score |
 | VQA Filtering | VideoLLaMA3-7B | Binary relevance decisions |
 | VQA Answering | VideoLLaMA3-7B | 4/5 VQA score |
-| Query Decomposition | GPT-4o | retrieval_query + question |
+| Query Decomposition | Kimi Coding (Anthropic-compatible API) | retrieval_query + question |
 
 ## Design Decisions from Paper
 
