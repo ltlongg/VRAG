@@ -124,7 +124,13 @@ class FilteringModule:
         # Create chunks with overlap
         # chunk_video takes the total duration and returns (start, end) tuples
         # relative to 0. We offset by start_time afterwards.
-        actual_end = end_time if end_time is not None else float('inf')
+        if end_time is not None:
+            actual_end = end_time
+        else:
+            # Get actual video duration to avoid infinite loop
+            from vrag.utils.video_utils import get_video_info
+            info = get_video_info(video_path)
+            actual_end = info["duration"]
         duration = actual_end - start_time
         if duration <= 0:
             return []

@@ -94,9 +94,9 @@ class FeatureExtractor:
             return
 
         try:
-            from transformers import Blip2Processor, Blip2ForConditionalGeneration
+            from transformers import Blip2Processor, Blip2Model
             processor = Blip2Processor.from_pretrained(model_name)
-            model = Blip2ForConditionalGeneration.from_pretrained(
+            model = Blip2Model.from_pretrained(
                 model_name, torch_dtype=torch.float16
             ).to(self.device)
             model.eval()

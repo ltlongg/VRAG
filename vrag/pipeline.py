@@ -123,12 +123,12 @@ class VRAGPipeline:
 
         text_search = TextSearch(
             method=ret_cfg.get("text_search", {}).get("method", "bm25"),
-            top_n=ret_cfg.get("top_n_candidates", 100),
+            top_n=ret_cfg.get("text_search", {}).get("top_n", 50),
         )
 
         audio_search = AudioSearch(
             method=ret_cfg.get("audio_search", {}).get("method", "bm25"),
-            top_n=ret_cfg.get("top_n_candidates", 100),
+            top_n=ret_cfg.get("audio_search", {}).get("top_n", 50),
         )
 
         object_filter = ObjectFilter()
@@ -278,13 +278,26 @@ class VRAGPipeline:
                     meta_file = os.path.join(feat_dir, "metadata.json")
                     if os.path.exists(meta_file):
                         with open(meta_file, "r") as mf:
-                            metadata = _json.load(mf)
+                            raw_metadata = _json.load(mf)
+                        if isinstance(raw_metadata, list):
+                            # Legacy flat list: replicate for each model,
+                            # capped to that model's feature count
+                            metadata = {
+                                model: raw_metadata[:len(feat_list)]
+                                for model, feat_list in features.items()
+                            }
+                        else:
+                            # Per-model dict (new format)
+                            metadata = raw_metadata
                     else:
                         # Fallback: derive from shot list, capped to feature count
-                        metadata = [
-                            {"video_id": vid, "shot_id": s.shot_id}
-                            for s in loaded_shots[:num_vectors]
-                        ]
+                        metadata = {
+                            model: [
+                                {"video_id": vid, "shot_id": s.shot_id}
+                                for s in loaded_shots[:len(feat_list)]
+                            ]
+                            for model, feat_list in features.items()
+                        }
                     all_preprocessed.append({
                         "video_id": vid,
                         "shots": loaded_shots,
@@ -637,7 +650,7 @@ class VRAGPipeline:
         feat_extractor = FeatureExtractor(device=device)
 
         features_per_model = {}
-        metadata_list = []
+        metadata_per_model = {}  # per-model metadata to stay aligned with features
 
         for shot in shots:
             if shot.keyframe_paths:
@@ -654,24 +667,24 @@ class VRAGPipeline:
                         images, model_names
                     )
                     if shot_features:
+                        meta_entry = {
+                            "video_id": video_id,
+                            "shot_id": shot.shot_id,
+                        }
                         for model_name, feats in shot_features.items():
                             if model_name not in features_per_model:
                                 features_per_model[model_name] = []
+                                metadata_per_model[model_name] = []
                             # Average features across keyframes for shot-level representation
                             import numpy as np
                             avg_feat = np.mean(feats, axis=0)
                             features_per_model[model_name].append(avg_feat)
-
-                        # Only append metadata when features were actually extracted
-                        metadata_list.append({
-                            "video_id": video_id,
-                            "shot_id": shot.shot_id,
-                        })
+                            metadata_per_model[model_name].append(meta_entry)
 
         results["features"] = features_per_model
-        results["metadata"] = metadata_list
+        results["metadata"] = metadata_per_model
 
-        # Save features and metadata
+        # Save features and per-model metadata
         import numpy as np
         import json as _json
         feat_dir = os.path.join(output_dir, "features")
@@ -679,12 +692,15 @@ class VRAGPipeline:
         for model_name, feats in features_per_model.items():
             feat_array = np.array(feats)
             np.save(os.path.join(feat_dir, f"{model_name}.npy"), feat_array)
-        # Save metadata so it can be reloaded aligned with features
+        # Save per-model metadata so it can be reloaded aligned with features
         with open(os.path.join(feat_dir, "metadata.json"), "w") as f:
-            _json.dump(metadata_list, f)
+            _json.dump(metadata_per_model, f)
 
+        total_shots = max(
+            (len(m) for m in metadata_per_model.values()), default=0
+        )
         logger.info(
-            f"[{video_id}] Extracted features for {len(metadata_list)} shots "
+            f"[{video_id}] Extracted features for {total_shots} shots "
             f"across {len(features_per_model)} models"
         )
 
@@ -776,7 +792,7 @@ class VRAGPipeline:
 
         # Aggregate features and metadata across all videos
         all_features = {}  # model -> list of feature vectors
-        all_metadata = []
+        all_metadata = {}  # model -> list of metadata dicts (per-model for alignment)
         all_ocr = {}  # video_id -> {shot_id: text}
         all_transcripts = {}  # video_id -> transcript
         all_objects = {}  # video_id -> {shot_id: [objects]}
@@ -790,7 +806,19 @@ class VRAGPipeline:
                     all_features[model_name] = []
                 all_features[model_name].extend(feats)
 
-            all_metadata.extend(data.get("metadata", []))
+            # Metadata: support per-model dict (new) and legacy flat list
+            metadata = data.get("metadata", {})
+            if isinstance(metadata, dict):
+                for model_name, meta_list in metadata.items():
+                    if model_name not in all_metadata:
+                        all_metadata[model_name] = []
+                    all_metadata[model_name].extend(meta_list)
+            elif isinstance(metadata, list):
+                # Legacy flat list: broadcast to all models from this video
+                for model_name in data.get("features", {}):
+                    if model_name not in all_metadata:
+                        all_metadata[model_name] = []
+                    all_metadata[model_name].extend(metadata)
 
             # OCR
             if data.get("ocr"):
@@ -804,10 +832,11 @@ class VRAGPipeline:
             if data.get("objects"):
                 all_objects[video_id] = data["objects"]
 
-        # Build FAISS indices
+        # Build FAISS indices (each model with its own aligned metadata)
         for model_name, feats in all_features.items():
             feat_array = np.array(feats)
-            index_builder.build_index(model_name, feat_array, all_metadata)
+            model_meta = all_metadata.get(model_name, [])
+            index_builder.build_index(model_name, feat_array, model_meta)
 
         # Build text/audio search indices
         text_search = self._modules.get("text_search")
@@ -827,7 +856,7 @@ class VRAGPipeline:
 
         logger.info(
             f"Indices built: {len(all_features)} models, "
-            f"{len(all_metadata)} total vectors"
+            f"{sum(len(f) for f in all_features.values())} total vectors"
         )
 
     def get_module(self, name: str):
