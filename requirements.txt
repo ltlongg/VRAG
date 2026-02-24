@@ -1,0 +1,47 @@
+# Core
+numpy>=1.24.0
+torch>=2.0.0
+torchvision>=0.15.0
+Pillow>=9.0.0
+pyyaml>=6.0
+tqdm>=4.65.0
+
+# Video Processing
+opencv-python>=4.7.0
+ffmpeg-python>=0.2.0
+
+# Shot Detection
+scenedetect[opencv]>=0.6.0
+
+# Vision-Language Models
+open-clip-torch>=2.20.0
+transformers>=4.35.0
+sentence-transformers>=2.2.0
+
+# BLIP-2
+salesforce-lavis>=1.0.0
+
+# FAISS for Vector Search
+faiss-cpu>=1.7.4
+# faiss-gpu>=1.7.4  # Uncomment for GPU support
+
+# BM25 Text Search
+rank-bm25>=0.2.2
+
+# OCR
+easyocr>=1.7.0
+# paddleocr>=2.7.0  # Alternative OCR backend
+
+# Audio Transcription
+openai-whisper>=20231117
+# faster-whisper>=0.10.0  # Faster alternative
+
+# Object Detection
+ultralytics>=8.0.0  # YOLOv8
+
+# OpenAI API (for GPT-4o query decomposition)
+openai>=1.0.0
+
+# Utilities
+scipy>=1.10.0
+scikit-learn>=1.2.0

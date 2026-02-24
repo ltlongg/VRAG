@@ -1,0 +1,155 @@
+# =============================================================================
+# VRAG: Retrieval-Augmented Video Question Answering for Long-Form Videos
+# Configuration File
+# =============================================================================
+
+# --- General Settings ---
+general:
+  device: "cuda"  # "cuda" or "cpu"
+  seed: 42
+  num_workers: 4
+  cache_dir: "./cache"
+  output_dir: "./output"
+  log_level: "INFO"
+
+# --- Dataset Settings ---
+dataset:
+  video_dir: "./data/videos"
+  keyframe_dir: "./data/keyframes"
+  features_dir: "./data/features"
+  index_dir: "./data/index"
+  shot_boundaries_file: "./data/shot_boundaries.json"
+  metadata_file: "./data/metadata.json"
+
+# --- Video Preprocessing ---
+preprocessing:
+  # Shot boundary detection
+  shot_detection:
+    method: "pyscenedetect"  # "pyscenedetect" or "transnetv2"
+    threshold: 27.0  # Scene detection threshold
+    min_scene_len: 15  # Minimum scene length in frames
+
+  # Keyframe extraction
+  keyframe_extraction:
+    method: "semantic"  # "semantic" or "uniform"
+    similarity_threshold: 0.85  # BEiT-3 cosine similarity threshold
+    max_keyframes_per_shot: 5
+    min_keyframes_per_shot: 1
+
+  # Feature extraction models
+  feature_extraction:
+    clip:
+      model_name: "ViT-L-14"
+      pretrained: "openai"
+      batch_size: 32
+    blip2:
+      model_name: "Salesforce/blip2-opt-2.7b"
+      batch_size: 16
+    beit3:
+      model_name: "microsoft/beit-base-patch16-224"
+      batch_size: 32
+    internvl:
+      model_name: "OpenGVLab/InternVL-14B-224px"
+      batch_size: 8
+
+  # OCR extraction
+  ocr:
+    text_detector: "deepsolo"  # DeepSolo for text detection
+    text_recognizer: "parseq"  # PARSeq for text recognition
+    detection_confidence: 0.5
+    recognition_confidence: 0.7
+
+  # Audio transcription
+  audio:
+    model_name: "openai/whisper-large-v3"
+    language: null  # null for auto-detect
+    batch_size: 16
+
+  # Object detection
+  object_detection:
+    model_name: "co-detr"  # Co-DETR
+    confidence_threshold: 0.5
+    nms_threshold: 0.5
+
+# --- Retrieval System ---
+retrieval:
+  # Semantic search
+  semantic:
+    models:
+      - "clip"
+      - "blip2"
+      - "beit3"
+      - "internvl"
+    fusion_method: "late_fusion"  # late_fusion, weighted_sum
+    fusion_weights:
+      clip: 0.3
+      blip2: 0.2
+      beit3: 0.2
+      internvl: 0.3
+    top_n: 100  # Number of initial candidates
+
+  # Text search (OCR-based)
+  text_search:
+    method: "bm25"  # "bm25" or "dense"
+    top_n: 50
+
+  # Audio search
+  audio_search:
+    method: "bm25"
+    top_n: 50
+
+  # Combined retrieval
+  top_n_candidates: 100  # Total candidates after multimodal fusion
+
+# --- Re-ranking Module ---
+reranking:
+  enabled: true
+  # Context expansion: include N preceding and N succeeding shots
+  context_window: 3  # 3 preceding + 3 succeeding shots
+  # MLLM for re-ranking
+  mllm:
+    model_name: "OpenGVLab/InternVL2_5-8B"  # or InternVL2.5-78B for best results
+    max_frames_per_segment: 16
+    score_scale: [0, 1]  # Relevance score range
+  top_k: 10  # Final number of results after re-ranking
+
+# --- VQA Module ---
+vqa:
+  # Query decomposition (Kimi coding via Anthropic-compatible API)
+  query_decomposer:
+    model: "kimi-for-coding"
+    api_key: "${KIMI_API_KEY}"
+    api_base: "https://api.kimi.com/coding/"
+
+  # Filtering module
+  filtering:
+    chunk_size_seconds: 15  # Size of each video chunk (paper: 15s best)
+    chunk_overlap_seconds: 5  # Overlap between chunks
+    mllm:
+      model_name: "DAMO-NLP-SG/VideoLLaMA3-7B"  # Best VQA model per paper
+      max_frames_per_chunk: 8
+
+  # Answering module
+  answering:
+    mllm:
+      model_name: "DAMO-NLP-SG/VideoLLaMA3-7B"
+      max_frames: 32
+      max_new_tokens: 512
+      temperature: 0.1
+
+# --- Indexing ---
+indexing:
+  backend: "faiss"  # "faiss" or "chromadb"
+  faiss:
+    index_type: "IVFFlat"  # "Flat", "IVFFlat", "IVFPQ"
+    nlist: 256
+    nprobe: 32
+    metric: "cosine"
+  dimension: 768  # Embedding dimension
+
+# --- Evaluation ---
+evaluation:
+  kis:
+    n_answers_per_task: 10
+  vqa:
+    max_score: 5
