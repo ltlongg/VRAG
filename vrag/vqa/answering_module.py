@@ -62,19 +62,7 @@ class AnsweringModule:
         if self._model is not None:
             return
 
-        model_name = self.mllm_model.lower()
-
-        if "videollama" in model_name:
-            self._load_videollama()
-        elif "internvl" in model_name:
-            self._load_internvl()
-        elif "gpt" in model_name:
-            self._load_gpt()
-        else:
-            logger.warning(
-                f"Model '{self.mllm_model}' not recognized. Using GPT fallback."
-            )
-            self._load_gpt()
+        self._load_videollama()
 
     def _load_videollama(self):
         """Load VideoLLaMA3 for answering."""
@@ -97,43 +85,8 @@ class AnsweringModule:
             self._model.eval()
             self._model_type = "videollama"
 
-        except Exception as e:
-            logger.warning(f"Failed to load VideoLLaMA3: {e}. Using GPT fallback.")
-            self._load_gpt()
-
-    def _load_internvl(self):
-        """Load InternVL for answering."""
-        try:
-            from transformers import AutoModel, AutoTokenizer
-            import torch
-
-            model_path = f"OpenGVLab/{self.mllm_model}"
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                model_path, trust_remote_code=True
-            )
-            self._model = AutoModel.from_pretrained(
-                model_path,
-                torch_dtype=torch.bfloat16,
-                trust_remote_code=True,
-                device_map="auto",
-            )
-            self._model.eval()
-            self._model_type = "internvl"
-
-        except Exception as e:
-            logger.warning(f"Failed to load InternVL: {e}. Using GPT fallback.")
-            self._load_gpt()
-
-    def _load_gpt(self):
-        """Load GPT-4o for answering (API-based)."""
-        try:
-            import openai
-            self._client = openai.OpenAI()
-            self._model_type = "gpt"
-            logger.info("GPT-4o initialized for VQA answering")
-        except Exception as e:
-            logger.error(f"Failed to init GPT client: {e}")
-            self._model_type = "none"
+        except ImportError:
+            raise ImportError("Install transformers: pip install transformers")
 
     def answer(
         self,
@@ -182,16 +135,8 @@ class AnsweringModule:
             )
 
         # Generate answer
-        model_type = getattr(self, "_model_type", "none")
         try:
-            if model_type == "videollama":
-                answer = self._answer_videollama(question, all_frames)
-            elif model_type == "internvl":
-                answer = self._answer_internvl(question, all_frames)
-            elif model_type == "gpt":
-                answer = self._answer_gpt(question, all_frames)
-            else:
-                answer = "Model not available for answering."
+            answer = self._answer_videollama(question, all_frames)
         except Exception as e:
             logger.error(f"Answer generation failed: {e}")
             answer = f"Error generating answer: {str(e)}"
@@ -214,6 +159,7 @@ class AnsweringModule:
             answer=answer,
             confidence=avg_confidence,
             task_type="vqa",
+            sources=sources,
         )
 
     def _aggregate_frames(self, chunks: List[Dict]) -> List:
@@ -288,82 +234,3 @@ class AnsweringModule:
             output[0], skip_special_tokens=True
         )
         return response.strip()
-
-    def _answer_internvl(self, question: str, frames: List) -> str:
-        """Generate answer using InternVL."""
-        import torch
-        from torchvision import transforms
-
-        prompt = ANSWERING_PROMPT_TEMPLATE.format(question=question)
-
-        transform = transforms.Compose([
-            transforms.Resize((448, 448)),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225],
-            ),
-        ])
-
-        sample_frames = frames[:min(len(frames), 16)]
-        pixel_values = torch.stack([transform(f) for f in sample_frames])
-        pixel_values = pixel_values.to(
-            dtype=self._model.dtype, device=self._model.device
-        )
-
-        num_frames = len(sample_frames)
-        image_tags = "".join(
-            [f"Frame {i+1}: <image>\n" for i in range(num_frames)]
-        )
-        full_prompt = image_tags + prompt
-
-        generation_config = {"max_new_tokens": 512, "do_sample": False}
-        response = self._model.chat(
-            self._tokenizer, pixel_values, full_prompt, generation_config
-        )
-        return response.strip()
-
-    def _answer_gpt(self, question: str, frames: List) -> str:
-        """Generate answer using GPT-4o (via API with encoded images)."""
-        import base64
-        from io import BytesIO
-
-        prompt = ANSWERING_PROMPT_TEMPLATE.format(question=question)
-
-        # Encode frames as base64 for GPT-4o
-        content = [{"type": "text", "text": prompt}]
-
-        # Sample up to 8 frames for API efficiency
-        if len(frames) > 8:
-            import numpy as np
-            indices = np.linspace(0, len(frames) - 1, 8, dtype=int)
-            selected = [frames[i] for i in indices]
-        else:
-            selected = frames
-
-        for frame in selected:
-            try:
-                buffered = BytesIO()
-                frame.save(buffered, format="JPEG", quality=85)
-                img_b64 = base64.b64encode(buffered.getvalue()).decode()
-                content.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{img_b64}",
-                        "detail": "low",
-                    },
-                })
-            except Exception as e:
-                logger.warning(f"Failed to encode frame: {e}")
-
-        try:
-            response = self._client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": content}],
-                max_tokens=512,
-                temperature=0.0,
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            logger.error(f"GPT-4o answering failed: {e}")
-            return f"Error: {str(e)}"

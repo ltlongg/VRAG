@@ -62,6 +62,26 @@ class Config:
     def get(self, key: str, default: Any = None) -> Any:
         return getattr(self, key, default)
 
+    def __iter__(self):
+        """Allow iteration over config keys (like a dict)."""
+        return iter(self.__dict__)
+
+    def __contains__(self, key: str) -> bool:
+        """Support 'key in config' checks."""
+        return key in self.__dict__
+
+    def keys(self):
+        """Return config keys."""
+        return self.__dict__.keys()
+
+    def values(self):
+        """Return config values."""
+        return self.__dict__.values()
+
+    def items(self):
+        """Return config key-value pairs."""
+        return self.__dict__.items()
+
     def to_dict(self) -> Dict[str, Any]:
         result = {}
         for key, value in self.__dict__.items():

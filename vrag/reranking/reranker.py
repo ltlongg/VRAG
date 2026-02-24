@@ -79,21 +79,7 @@ class Reranker:
         if self._model is not None:
             return
 
-        model_name = self.mllm_model.lower()
-
-        if "internvl" in model_name:
-            self._load_internvl()
-        elif "qwen" in model_name:
-            self._load_qwen_vl()
-        elif "llava" in model_name:
-            self._load_llava()
-        else:
-            # Fallback: CLIP-based scoring
-            logger.warning(
-                f"MLLM '{self.mllm_model}' not recognized. "
-                "Falling back to CLIP-based re-ranking."
-            )
-            self._load_clip_fallback()
+        self._load_internvl()
 
     def _load_internvl(self):
         """Load InternVL2.5 model for re-ranking."""
@@ -117,68 +103,8 @@ class Reranker:
             self._model_type = "internvl"
             logger.info("InternVL loaded successfully")
 
-        except Exception as e:
-            logger.warning(f"Failed to load InternVL: {e}. Using CLIP fallback.")
-            self._load_clip_fallback()
-
-    def _load_qwen_vl(self):
-        """Load Qwen-VL model for re-ranking."""
-        try:
-            import torch
-            from transformers import AutoModelForCausalLM, AutoTokenizer
-
-            logger.info(f"Loading Qwen-VL model: {self.mllm_model}")
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                self.mllm_model, trust_remote_code=True
-            )
-            self._model = AutoModelForCausalLM.from_pretrained(
-                self.mllm_model,
-                torch_dtype=torch.bfloat16,
-                trust_remote_code=True,
-                device_map="auto",
-            )
-            self._model.eval()
-            self._model_type = "qwen_vl"
-
-        except Exception as e:
-            logger.warning(f"Failed to load Qwen-VL: {e}. Using CLIP fallback.")
-            self._load_clip_fallback()
-
-    def _load_llava(self):
-        """Load LLaVA model for re-ranking."""
-        try:
-            from transformers import LlavaForConditionalGeneration, AutoProcessor
-
-            logger.info(f"Loading LLaVA model: {self.mllm_model}")
-            self._processor = AutoProcessor.from_pretrained(self.mllm_model)
-            self._model = LlavaForConditionalGeneration.from_pretrained(
-                self.mllm_model, device_map="auto"
-            )
-            self._model.eval()
-            self._model_type = "llava"
-
-        except Exception as e:
-            logger.warning(f"Failed to load LLaVA: {e}. Using CLIP fallback.")
-            self._load_clip_fallback()
-
-    def _load_clip_fallback(self):
-        """Load CLIP as a fallback for re-ranking (simpler but less accurate)."""
-        try:
-            import open_clip
-
-            model, _, preprocess = open_clip.create_model_and_transforms(
-                "ViT-L-14", pretrained="openai"
-            )
-            tokenizer = open_clip.get_tokenizer("ViT-L-14")
-            self._model = model
-            self._processor = preprocess
-            self._tokenizer = tokenizer
-            self._model_type = "clip"
-            logger.info("CLIP fallback loaded for re-ranking")
-
-        except Exception as e:
-            logger.error(f"Failed to load CLIP fallback: {e}")
-            self._model_type = "none"
+        except ImportError:
+            raise ImportError("Install transformers: pip install transformers")
 
     def rerank(
         self,
@@ -366,61 +292,12 @@ class Reranker:
         if not frames or self._model is None:
             return 0.0
 
-        model_type = getattr(self, "_model_type", "none")
-
         try:
-            if model_type == "clip":
-                return self._score_clip(query, frames)
-            elif model_type in ("internvl", "qwen_vl", "llava"):
-                return self._score_mllm(query, frames)
-            else:
-                return 0.0
+            return self._score_internvl(
+                RERANKING_PROMPT_TEMPLATE.format(query=query), frames
+            )
         except Exception as e:
             logger.warning(f"Scoring failed: {e}")
-            return 0.0
-
-    def _score_clip(self, query: str, frames: List) -> float:
-        """Score using CLIP (cosine similarity average over frames)."""
-        import torch
-
-        model = self._model
-        preprocess = self._processor
-        tokenizer = self._tokenizer
-
-        model.eval()
-        with torch.no_grad():
-            text_tokens = tokenizer([query])
-            text_features = model.encode_text(text_tokens)
-            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-
-            scores = []
-            for frame in frames:
-                img_tensor = preprocess(frame).unsqueeze(0)
-                img_features = model.encode_image(img_tensor)
-                img_features = img_features / img_features.norm(dim=-1, keepdim=True)
-                similarity = (text_features @ img_features.T).item()
-                scores.append(similarity)
-
-        # Average cosine similarity, normalized to 0-1
-        avg_score = np.mean(scores) if scores else 0.0
-        return float(np.clip((avg_score + 1) / 2, 0, 1))
-
-    def _score_mllm(self, query: str, frames: List) -> float:
-        """Score using MLLM (InternVL, Qwen-VL, LLaVA)."""
-        import torch
-
-        prompt = RERANKING_PROMPT_TEMPLATE.format(query=query)
-
-        try:
-            if self._model_type == "internvl":
-                return self._score_internvl(prompt, frames)
-            elif self._model_type == "llava":
-                return self._score_llava(prompt, frames)
-            else:
-                # Fallback: use first frame with generic vision-language scoring
-                return self._score_generic_vl(prompt, frames)
-        except Exception as e:
-            logger.warning(f"MLLM scoring error: {e}")
             return 0.0
 
     def _score_internvl(self, prompt: str, frames: List) -> float:
@@ -463,25 +340,6 @@ class Reranker:
         )
 
         return self._parse_score(response)
-
-    def _score_llava(self, prompt: str, frames: List) -> float:
-        """Score using LLaVA."""
-        import torch
-
-        frame = frames[len(frames) // 2]  # Use middle frame
-        inputs = self._processor(
-            text=prompt, images=frame, return_tensors="pt"
-        ).to(self._model.device)
-
-        with torch.no_grad():
-            output = self._model.generate(**inputs, max_new_tokens=10)
-
-        response = self._processor.decode(output[0], skip_special_tokens=True)
-        return self._parse_score(response)
-
-    def _score_generic_vl(self, prompt: str, frames: List) -> float:
-        """Generic VL scoring using standard transformers pipeline."""
-        return 0.5  # Neutral score fallback
 
     def _parse_score(self, response: str) -> float:
         """Parse MLLM response to extract float score."""

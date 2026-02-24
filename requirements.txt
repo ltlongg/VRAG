@@ -9,17 +9,19 @@ tqdm>=4.65.0
 # Video Processing
 opencv-python>=4.7.0
 ffmpeg-python>=0.2.0
+moviepy>=1.0.3
 
-# Shot Detection
+# Shot Detection (pyscenedetect)
 scenedetect[opencv]>=0.6.0
 
 # Vision-Language Models
+# Feature extraction: CLIP, BLIP-2, BEiT-3, InternVL
 open-clip-torch>=2.20.0
 transformers>=4.35.0
-sentence-transformers>=2.2.0
+accelerate>=0.25.0
 
-# BLIP-2
-salesforce-lavis>=1.0.0
+# Dense text search
+sentence-transformers>=2.2.0
 
 # FAISS for Vector Search
 faiss-cpu>=1.7.4
@@ -28,19 +30,18 @@ faiss-cpu>=1.7.4
 # BM25 Text Search
 rank-bm25>=0.2.2
 
-# OCR
-easyocr>=1.7.0
-# paddleocr>=2.7.0  # Alternative OCR backend
+# OCR: DeepSolo + PARSeq
+# detectron2 - install manually: https://github.com/facebookresearch/detectron2
+# adet (AdelaiDet) - install manually: https://github.com/aim-uofa/AdelaiDet
+# strhub (PARSeq) - install manually: pip install strhub
 
-# Audio Transcription
-openai-whisper>=20231117
-# faster-whisper>=0.10.0  # Faster alternative
+# Audio Transcription: Whisper (install one of the following)
+faster-whisper>=1.0.0          # Recommended (fastest)
+# transformers already listed above (also supports Whisper)
+# openai-whisper>=20231117     # Alternative
 
-# Object Detection
-ultralytics>=8.0.0  # YOLOv8
-
-# OpenAI API (for GPT-4o query decomposition)
-openai>=1.0.0
+# Kimi API (for query decomposition)
+anthropic>=0.18.0
 
 # Utilities
 scipy>=1.10.0

@@ -73,17 +73,7 @@ class FilteringModule:
         if self._model is not None:
             return
 
-        model_name = self.mllm_model.lower()
-
-        if "videollama" in model_name:
-            self._load_videollama()
-        elif "internvl" in model_name:
-            self._load_internvl()
-        else:
-            logger.warning(
-                f"Model '{self.mllm_model}' not recognized. Using CLIP fallback."
-            )
-            self._load_clip_fallback()
+        self._load_videollama()
 
     def _load_videollama(self):
         """Load VideoLLaMA3 for filtering."""
@@ -107,54 +97,8 @@ class FilteringModule:
             self._model_type = "videollama"
             logger.info("VideoLLaMA3 loaded successfully")
 
-        except Exception as e:
-            logger.warning(f"Failed to load VideoLLaMA3: {e}. Using CLIP fallback.")
-            self._load_clip_fallback()
-
-    def _load_internvl(self):
-        """Load InternVL for filtering."""
-        try:
-            from transformers import AutoModel, AutoTokenizer
-            import torch
-
-            model_path = f"OpenGVLab/{self.mllm_model}"
-            logger.info(f"Loading InternVL: {model_path}")
-
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                model_path, trust_remote_code=True
-            )
-            self._model = AutoModel.from_pretrained(
-                model_path,
-                torch_dtype=torch.bfloat16,
-                trust_remote_code=True,
-                device_map="auto",
-            )
-            self._model.eval()
-            self._model_type = "internvl"
-            logger.info("InternVL loaded for filtering")
-
-        except Exception as e:
-            logger.warning(f"Failed to load InternVL: {e}. Using CLIP fallback.")
-            self._load_clip_fallback()
-
-    def _load_clip_fallback(self):
-        """CLIP-based relevance scoring fallback."""
-        try:
-            import open_clip
-
-            model, _, preprocess = open_clip.create_model_and_transforms(
-                "ViT-L-14", pretrained="openai"
-            )
-            tokenizer = open_clip.get_tokenizer("ViT-L-14")
-            self._model = model
-            self._processor = preprocess
-            self._tokenizer = tokenizer
-            self._model_type = "clip"
-            logger.info("CLIP fallback loaded for filtering")
-
-        except Exception as e:
-            logger.error(f"Failed to load CLIP fallback: {e}")
-            self._model_type = "none"
+        except ImportError:
+            raise ImportError("Install transformers: pip install transformers")
 
     def filter_video(
         self,
@@ -336,46 +280,11 @@ class FilteringModule:
         Returns:
             (is_relevant, confidence)
         """
-        model_type = getattr(self, "_model_type", "none")
-
         try:
-            if model_type == "clip":
-                return self._assess_clip(query, frames)
-            elif model_type in ("videollama", "internvl"):
-                return self._assess_mllm(query, frames)
-            else:
-                return False, 0.0
+            return self._assess_mllm(query, frames)
         except Exception as e:
             logger.warning(f"Relevance assessment failed: {e}")
             return False, 0.0
-
-    def _assess_clip(self, query: str, frames: List) -> Tuple[bool, float]:
-        """CLIP-based relevance scoring."""
-        import torch
-
-        model = self._model
-        preprocess = self._processor
-        tokenizer = self._tokenizer
-
-        model.eval()
-        with torch.no_grad():
-            text_tokens = tokenizer([query])
-            text_features = model.encode_text(text_tokens)
-            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-
-            scores = []
-            for frame in frames:
-                img_tensor = preprocess(frame).unsqueeze(0)
-                img_features = model.encode_image(img_tensor)
-                img_features = img_features / img_features.norm(dim=-1, keepdim=True)
-                similarity = (text_features @ img_features.T).item()
-                scores.append(similarity)
-
-        avg_score = np.mean(scores) if scores else 0.0
-        confidence = float((avg_score + 1) / 2)  # Normalize to 0-1
-        is_relevant = confidence >= self.confidence_threshold
-
-        return is_relevant, confidence
 
     def _assess_mllm(self, query: str, frames: List) -> Tuple[bool, float]:
         """MLLM-based binary relevance decision."""
@@ -383,12 +292,7 @@ class FilteringModule:
 
         prompt = FILTERING_PROMPT_TEMPLATE.format(query=query)
 
-        if self._model_type == "videollama":
-            response = self._assess_videollama(prompt, frames)
-        elif self._model_type == "internvl":
-            response = self._assess_internvl(prompt, frames)
-        else:
-            return False, 0.0
+        response = self._assess_videollama(prompt, frames)
 
         # Parse YES/NO response
         response_clean = response.strip().upper()
@@ -432,35 +336,3 @@ class FilteringModule:
         except Exception as e:
             logger.warning(f"VideoLLaMA3 inference failed: {e}")
             return ""
-
-    def _assess_internvl(self, prompt: str, frames: List) -> str:
-        """Assess using InternVL."""
-        import torch
-        from torchvision import transforms
-
-        transform = transforms.Compose([
-            transforms.Resize((448, 448)),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225],
-            ),
-        ])
-
-        sample_frames = frames[:min(len(frames), 8)]
-        pixel_values = torch.stack([transform(f) for f in sample_frames])
-        pixel_values = pixel_values.to(
-            dtype=self._model.dtype, device=self._model.device
-        )
-
-        num_frames = len(sample_frames)
-        image_tags = "".join(
-            [f"Frame {i+1}: <image>\n" for i in range(num_frames)]
-        )
-        full_prompt = image_tags + prompt
-
-        generation_config = {"max_new_tokens": 10, "do_sample": False}
-        response = self._model.chat(
-            self._tokenizer, pixel_values, full_prompt, generation_config
-        )
-        return response

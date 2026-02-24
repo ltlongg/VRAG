@@ -109,8 +109,11 @@ class FeatureExtractor:
     @torch.no_grad()
     def extract_blip2_features(self, images: List[Image.Image]) -> np.ndarray:
         """
-        Extract BLIP-2 image-text matching features.
-        Uses the image encoder to get visual features.
+        Extract BLIP-2 image features via Q-Former (768-dim, ITC-aligned).
+
+        Uses Blip2Model.get_image_features() so that the resulting vectors
+        are in the same embedding space as BLIP-2 text features produced by
+        get_text_features(), enabling proper cosine-similarity search.
         """
         self.load_blip2()
         processor = self._processors["blip2"]
@@ -124,10 +127,12 @@ class FeatureExtractor:
             inputs = processor(images=batch, return_tensors="pt").to(
                 self.device, torch.float16
             )
-            # Extract image features from the vision model
-            image_outputs = model.vision_model(pixel_values=inputs.pixel_values)
-            # Use CLS token as the image feature
-            features = image_outputs.last_hidden_state[:, 0, :]
+            # get_image_features → Q-Former → (batch, num_query_tokens, 768)
+            # Mean-pool over query tokens to get a single 768-dim vector.
+            image_features = model.get_image_features(
+                pixel_values=inputs.pixel_values
+            )  # (B, 32, 768)
+            features = image_features.mean(dim=1)  # (B, 768)
             features = features.float()
             features = features / features.norm(dim=-1, keepdim=True)
             all_features.append(features.cpu().numpy())
@@ -136,16 +141,23 @@ class FeatureExtractor:
 
     @torch.no_grad()
     def extract_blip2_text_features(self, texts: List[str]) -> np.ndarray:
-        """Extract BLIP-2 text features using the text encoder."""
+        """
+        Extract BLIP-2 text features via Q-Former (768-dim, ITC-aligned).
+
+        Uses Blip2Model.get_text_features() so the vectors are in the same
+        embedding space as the image features from extract_blip2_features().
+        """
         self.load_blip2()
         processor = self._processors["blip2"]
         model = self._models["blip2"]
 
         inputs = processor(text=texts, return_tensors="pt", padding=True).to(self.device)
-        # Use the language model to get text features
         with torch.no_grad():
-            text_outputs = model.language_model.model.embed_tokens(inputs.input_ids)
-            features = text_outputs.mean(dim=1)
+            # get_text_features → Q-Former text path → (batch, 768)
+            features = model.get_text_features(
+                input_ids=inputs.input_ids,
+                attention_mask=inputs.attention_mask,
+            )
             features = features.float()
             features = features / features.norm(dim=-1, keepdim=True)
         return features.cpu().numpy()
@@ -197,7 +209,6 @@ class FeatureExtractor:
     def load_internvl(self, model_name: str = "OpenGVLab/InternVL-14B-224px"):
         """
         Load InternVL model for vision-language feature extraction.
-        Falls back to CLIP if InternVL is not available.
         """
         if "internvl" in self._models:
             return
@@ -216,20 +227,13 @@ class FeatureExtractor:
             self._processors["internvl"] = processor
             self._tokenizers["internvl"] = tokenizer
             logger.info(f"Loaded InternVL model: {model_name}")
-        except Exception as e:
-            logger.warning(f"Failed to load InternVL ({e}), will use CLIP as fallback")
-            self.load_clip()
-            self._models["internvl"] = self._models["clip"]
-            self._processors["internvl"] = self._processors["clip"]
+        except ImportError:
+            raise ImportError("Install transformers: pip install transformers")
 
     @torch.no_grad()
     def extract_internvl_features(self, images: List[Image.Image]) -> np.ndarray:
         """Extract InternVL image features."""
         self.load_internvl()
-
-        # If using CLIP as fallback
-        if "clip" in self._models and self._models.get("internvl") is self._models.get("clip"):
-            return self.extract_clip_image_features(images)
 
         processor = self._processors["internvl"]
         model = self._models["internvl"]

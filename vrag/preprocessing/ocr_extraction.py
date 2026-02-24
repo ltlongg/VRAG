@@ -26,8 +26,6 @@ class OCRExtractor:
     Architecture (per paper):
       - Text Detection: DeepSolo
       - Text Recognition: PARSeq
-    
-    Falls back to EasyOCR or PaddleOCR if DeepSolo/PARSeq are not available.
     """
 
     def __init__(
@@ -50,11 +48,7 @@ class OCRExtractor:
         if self._ocr_engine is not None:
             return
 
-        if self.detector == "deepsolo" and self.recognizer == "parseq":
-            self._load_deepsolo_parseq()
-        else:
-            # Fallback to a unified OCR engine
-            self._load_fallback_ocr()
+        self._load_deepsolo_parseq()
 
     def _load_deepsolo_parseq(self):
         """
@@ -83,32 +77,10 @@ class OCRExtractor:
             self._ocr_engine = "deepsolo_parseq"
             logger.info("Loaded DeepSolo + PARSeq OCR pipeline")
             
-        except (ImportError, Exception) as e:
-            logger.warning(
-                f"DeepSolo/PARSeq not available ({e}). Falling back to EasyOCR."
-            )
-            self._load_fallback_ocr()
-
-    def _load_fallback_ocr(self):
-        """Load fallback OCR engine (EasyOCR or PaddleOCR)."""
-        try:
-            import easyocr
-            gpu = self.device == "cuda"
-            self._ocr_engine = easyocr.Reader(["en"], gpu=gpu)
-            logger.info("Loaded EasyOCR as fallback OCR engine")
         except ImportError:
-            try:
-                from paddleocr import PaddleOCR
-                self._ocr_engine = PaddleOCR(
-                    use_angle_cls=True, lang="en",
-                    use_gpu=(self.device == "cuda")
-                )
-                logger.info("Loaded PaddleOCR as fallback OCR engine")
-            except ImportError:
-                logger.error(
-                    "No OCR engine available. Install easyocr or paddleocr."
-                )
-                self._ocr_engine = None
+            raise ImportError(
+                "DeepSolo/PARSeq required. Install detectron2/adet and strhub."
+            )
 
     def extract_text(self, image: np.ndarray) -> List[Dict]:
         """
@@ -125,40 +97,7 @@ class OCRExtractor:
         if self._ocr_engine is None:
             return []
 
-        if isinstance(self._ocr_engine, str) and self._ocr_engine == "deepsolo_parseq":
-            return self._extract_deepsolo_parseq(image)
-        elif hasattr(self._ocr_engine, 'readtext'):
-            return self._extract_easyocr(image)
-        else:
-            return self._extract_paddleocr(image)
-
-    def _extract_easyocr(self, image: np.ndarray) -> List[Dict]:
-        """Extract text using EasyOCR."""
-        results = self._ocr_engine.readtext(image)
-        extracted = []
-        for bbox, text, confidence in results:
-            if confidence >= self.recognition_confidence:
-                extracted.append({
-                    "text": text,
-                    "confidence": float(confidence),
-                    "bbox": bbox,
-                })
-        return extracted
-
-    def _extract_paddleocr(self, image: np.ndarray) -> List[Dict]:
-        """Extract text using PaddleOCR."""
-        result = self._ocr_engine.ocr(image, cls=True)
-        extracted = []
-        if result and result[0]:
-            for line in result[0]:
-                bbox, (text, confidence) = line
-                if confidence >= self.recognition_confidence:
-                    extracted.append({
-                        "text": text,
-                        "confidence": float(confidence),
-                        "bbox": bbox,
-                    })
-        return extracted
+        return self._extract_deepsolo_parseq(image)
 
     def _extract_deepsolo_parseq(self, image: np.ndarray) -> List[Dict]:
         """Extract text using DeepSolo detection + PARSeq recognition."""

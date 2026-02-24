@@ -36,7 +36,7 @@ COCO_CLASSES = [
 
 class ObjectDetector:
     """
-    Detect objects in video keyframes using Co-DETR or fallback detectors.
+    Detect objects in video keyframes using Co-DETR.
     
     Used as a post-processing filter to ensure retrieved segments contain
     objects that match query constraints.
@@ -60,21 +60,16 @@ class ObjectDetector:
         if self._model is not None:
             return
 
-        if self.model_name == "co-detr":
-            self._load_co_detr()
-        else:
-            self._load_fallback()
+        self._load_co_detr()
 
     def _load_co_detr(self):
         """
         Load Co-DETR (DETRs with Collaborative Hybrid Assignments Training).
-        Falls back to DETA or DETR if Co-DETR is not available.
+        Uses DETA (Swin-Large) as the HuggingFace approximation.
         """
         try:
-            # Try Co-DETR from mmdetection or hub
             from transformers import AutoModelForObjectDetection, AutoImageProcessor
             
-            # Use DETA as a close approximation of Co-DETR
             model_id = "jozhang97/deta-swin-large"
             self._processor = AutoImageProcessor.from_pretrained(model_id)
             self._model = AutoModelForObjectDetection.from_pretrained(model_id).to(
@@ -84,38 +79,8 @@ class ObjectDetector:
             self._engine = "deta"
             logger.info(f"Loaded DETA model (Co-DETR approximation): {model_id}")
 
-        except Exception as e:
-            logger.warning(f"DETA not available ({e}), trying DETR fallback")
-            try:
-                from transformers import DetrForObjectDetection, DetrImageProcessor
-                model_id = "facebook/detr-resnet-101"
-                self._processor = DetrImageProcessor.from_pretrained(model_id)
-                self._model = DetrForObjectDetection.from_pretrained(model_id).to(
-                    self.device
-                )
-                self._model.eval()
-                self._engine = "detr"
-                logger.info(f"Loaded DETR model: {model_id}")
-            except Exception as e2:
-                logger.warning(f"DETR not available ({e2}), using YOLOv5 fallback")
-                self._load_fallback()
-
-    def _load_fallback(self):
-        """Load YOLO or ultralytics as fallback."""
-        try:
-            from ultralytics import YOLO
-            self._model = YOLO("yolov8x.pt")
-            self._engine = "yolo"
-            logger.info("Loaded YOLOv8x as fallback object detector")
         except ImportError:
-            try:
-                self._model = torch.hub.load("ultralytics/yolov5", "yolov5x")
-                self._engine = "yolov5"
-                logger.info("Loaded YOLOv5x as fallback object detector")
-            except Exception:
-                logger.error("No object detection model available!")
-                self._model = None
-                self._engine = None
+            raise ImportError("Install transformers: pip install transformers")
 
     @torch.no_grad()
     def detect(self, image: np.ndarray) -> List[Dict]:
@@ -133,12 +98,7 @@ class ObjectDetector:
         if self._model is None:
             return []
 
-        if self._engine in ("deta", "detr"):
-            return self._detect_detr(image)
-        elif self._engine in ("yolo", "yolov5"):
-            return self._detect_yolo(image)
-        
-        return []
+        return self._detect_detr(image)
 
     def _detect_detr(self, image: np.ndarray) -> List[Dict]:
         """Detect objects using DETR/DETA."""
@@ -170,33 +130,6 @@ class ObjectDetector:
             })
 
         return detections
-
-    def _detect_yolo(self, image: np.ndarray) -> List[Dict]:
-        """Detect objects using YOLO."""
-        if self._engine == "yolo":
-            # ultralytics YOLOv8
-            results = self._model(image, conf=self.confidence_threshold)
-            detections = []
-            for result in results:
-                for box in result.boxes:
-                    detections.append({
-                        "label": result.names[int(box.cls)],
-                        "confidence": float(box.conf),
-                        "bbox": box.xyxy[0].cpu().numpy().tolist(),
-                    })
-            return detections
-        else:
-            # YOLOv5
-            results = self._model(image)
-            detections = []
-            for *xyxy, conf, cls in results.xyxy[0]:
-                if conf >= self.confidence_threshold:
-                    detections.append({
-                        "label": results.names[int(cls)],
-                        "confidence": float(conf),
-                        "bbox": [float(x) for x in xyxy],
-                    })
-            return detections
 
     def detect_in_keyframes(
         self, keyframe_paths: List[str]

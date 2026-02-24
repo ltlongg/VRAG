@@ -353,8 +353,17 @@ class IndexBuilder:
             elif "beit" in model_name.lower():
                 self._feature_extractors[model_name] = self._make_beit_extractor()
             elif "internvl" in model_name.lower():
-                # InternVL uses CLIP-style features
-                self._feature_extractors[model_name] = self._make_clip_extractor()
+                # InternVL image features use InternViT which outputs ~3200-dim
+                # vectors — incompatible with CLIP's 768-dim text space.
+                # Text-based search is disabled for InternVL indices; they can
+                # still be queried via image features when cross-modal search
+                # is performed.
+                logger.warning(
+                    f"Text search is not supported for InternVL index '{model_name}': "
+                    "InternVL image features (~3200-dim) cannot be queried with "
+                    "CLIP text features (768-dim). Skipping InternVL text extractor."
+                )
+                self._feature_extractors[model_name] = None
             else:
                 logger.warning(f"No extractor for model: {model_name}")
                 self._feature_extractors[model_name] = None
@@ -406,15 +415,27 @@ class IndexBuilder:
                 inputs = processor(text=text, return_tensors="pt").to(
                     model.device
                 )
-                text_features = model.get_text_features(**inputs)
-                features = text_features.mean(dim=1)
-                features = features / features.norm(dim=-1, keepdim=True)
+                # get_text_features returns (batch, output_dim) — already
+                # pooled via CLS token.  Do NOT call .mean(dim=1) here;
+                # that would incorrectly collapse the feature dimension.
+                text_features = model.get_text_features(
+                    input_ids=inputs.input_ids,
+                    attention_mask=inputs.get("attention_mask"),
+                )  # (batch, 256)
+                features = text_features / text_features.norm(dim=-1, keepdim=True)
                 return features.cpu().numpy().flatten()
 
         return extract
 
     def _make_beit_extractor(self):
-        """Create BEiT-3 text feature extractor (falls back to CLIP)."""
+        """Create BEiT-3 text feature extractor.
+
+        Note: BEiT-3 (base) image features are 768-dim, matching CLIP text
+        features in dimension. However, the spaces are NOT aligned (BEiT-3
+        was not trained with a contrastive text-image objective the way CLIP
+        was). This will not cause a dimension crash but text queries against
+        the BEiT-3 index will return semantically approximate results at best.
+        """
         return self._make_clip_extractor()
 
     def get_stats(self) -> Dict:

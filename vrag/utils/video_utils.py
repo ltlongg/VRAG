@@ -101,6 +101,9 @@ class VRAGResult:
     retrieved_segments: List[VideoSegment] = field(default_factory=list)
     confidence: float = 0.0
     task_type: str = "vqa"  # "kis" or "vqa"
+    # Per-chunk source references used to construct the answer.
+    # Each entry contains 'chunk_id', 'start_time', 'end_time', 'confidence'.
+    sources: List[Dict] = field(default_factory=list)
 
 
 # =============================================================================
