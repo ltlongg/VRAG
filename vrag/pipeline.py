@@ -86,10 +86,11 @@ class VRAGPipeline:
         from vrag.indexing.index_builder import IndexBuilder
 
         idx_cfg = self.config.get("indexing", {})
+        faiss_cfg = idx_cfg.get("faiss", {})
         self._modules["index_builder"] = IndexBuilder(
-            index_dir=idx_cfg.get("index_dir", "data/indices"),
-            index_type=idx_cfg.get("type", "IVFFlat"),
-            nlist=idx_cfg.get("nlist", 100),
+            index_dir=self.config.get("dataset", {}).get("index_dir", "data/indices"),
+            index_type=faiss_cfg.get("index_type", "IVFFlat"),
+            nlist=faiss_cfg.get("nlist", 256),
         )
 
         # Try to load existing indices
@@ -154,11 +155,12 @@ class VRAGPipeline:
 
         rr_cfg = self.config.get("reranking", {})
 
+        mllm_cfg = rr_cfg.get("mllm", {})
         self._modules["reranker"] = Reranker(
-            mllm_model=rr_cfg.get("mllm_model", "InternVL2.5-8B"),
+            mllm_model=mllm_cfg.get("model_name", "InternVL2.5-8B"),
             context_window=rr_cfg.get("context_window", 3),
             top_k=rr_cfg.get("top_k", 10),
-            max_frames_per_segment=rr_cfg.get("max_frames_per_segment", 16),
+            max_frames_per_segment=mllm_cfg.get("max_frames_per_segment", 16),
         )
 
     def _init_vqa(self):
@@ -178,17 +180,132 @@ class VRAGPipeline:
             api_base=decomp_cfg.get("api_base", "https://api.kimi.com/coding/"),
         )
 
+        filt_mllm_cfg = filt_cfg.get("mllm", {})
         self._modules["filtering"] = FilteringModule(
-            mllm_model=filt_cfg.get("mllm_model", "VideoLLaMA3-7B"),
-            chunk_size=filt_cfg.get("chunk_size", 15.0),
-            chunk_overlap=filt_cfg.get("chunk_overlap", 5.0),
-            max_frames_per_chunk=filt_cfg.get("max_frames_per_chunk", 16),
+            mllm_model=filt_mllm_cfg.get("model_name", "VideoLLaMA3-7B"),
+            chunk_size=filt_cfg.get("chunk_size_seconds", 15.0),
+            chunk_overlap=filt_cfg.get("chunk_overlap_seconds", 5.0),
+            max_frames_per_chunk=filt_mllm_cfg.get("max_frames_per_chunk", 8),
         )
 
+        ans_mllm_cfg = ans_cfg.get("mllm", {})
         self._modules["answering"] = AnsweringModule(
-            mllm_model=ans_cfg.get("mllm_model", "VideoLLaMA3-7B"),
-            max_frames=ans_cfg.get("max_frames", 32),
+            mllm_model=ans_mllm_cfg.get("model_name", "VideoLLaMA3-7B"),
+            max_frames=ans_mllm_cfg.get("max_frames", 32),
         )
+
+    # ========== Auto Preparation ==========
+
+    def _auto_prepare(
+        self,
+        video_path: str = None,
+        video_dir: str = None,
+        shots_data: Dict[str, List[Shot]] = None,
+    ) -> Dict[str, List[Shot]]:
+        """
+        Automatically preprocess video(s) and build indices if not already done.
+        This enables true end-to-end usage: just call run_kis/run_vqa with a
+        video path and everything is handled automatically.
+
+        Args:
+            video_path: Path to a single video file.
+            video_dir: Directory of video files.
+            shots_data: Pre-existing shots data (skips preprocessing if provided).
+
+        Returns:
+            shots_data dict mapping video_id -> List[Shot].
+        """
+        if shots_data is None:
+            shots_data = {}
+
+        # Collect video paths to process
+        video_paths = []
+        if video_path and os.path.isfile(video_path):
+            video_paths.append(video_path)
+        if video_dir and os.path.isdir(video_dir):
+            import glob
+            for ext in ["mp4", "avi", "mkv", "mov", "webm"]:
+                video_paths.extend(glob.glob(os.path.join(video_dir, f"*.{ext}")))
+            video_paths = sorted(set(video_paths))
+
+        if not video_paths:
+            return shots_data
+
+        # Check which videos need preprocessing
+        index_builder = self._modules.get("index_builder")
+        has_any_index = index_builder and any(
+            index_builder.has_index(m) for m in ["clip", "blip2", "beit3", "internvl"]
+        )
+
+        videos_to_process = []
+        for vp in video_paths:
+            vid = Path(vp).stem
+            if vid not in shots_data:
+                videos_to_process.append(vp)
+
+        if not videos_to_process and has_any_index:
+            # Everything already prepared
+            return shots_data
+
+        # Preprocess videos that need it
+        all_preprocessed = []
+        for vp in videos_to_process:
+            vid = Path(vp).stem
+            output_dir = str(
+                Path(self.config.get("general", {}).get("output_dir", "output")) / vid
+            )
+
+            # Check if preprocessing output already exists on disk
+            shots_file = os.path.join(output_dir, "shots.json")
+            if os.path.exists(shots_file):
+                logger.info(f"[{vid}] Loading existing preprocessed data from {output_dir}")
+                loaded_shots = load_shots(shots_file)
+                shots_data[vid] = loaded_shots
+
+                # Try to load features for index building
+                feat_dir = os.path.join(output_dir, "features")
+                if os.path.isdir(feat_dir):
+                    import numpy as np
+                    import json as _json
+                    features = {}
+                    num_vectors = 0
+                    for feat_file in Path(feat_dir).glob("*.npy"):
+                        feat_array = np.load(str(feat_file))
+                        features[feat_file.stem] = list(feat_array)
+                        num_vectors = max(num_vectors, len(feat_array))
+
+                    # Prefer saved metadata file for exact alignment
+                    meta_file = os.path.join(feat_dir, "metadata.json")
+                    if os.path.exists(meta_file):
+                        with open(meta_file, "r") as mf:
+                            metadata = _json.load(mf)
+                    else:
+                        # Fallback: derive from shot list, capped to feature count
+                        metadata = [
+                            {"video_id": vid, "shot_id": s.shot_id}
+                            for s in loaded_shots[:num_vectors]
+                        ]
+                    all_preprocessed.append({
+                        "video_id": vid,
+                        "shots": loaded_shots,
+                        "features": features,
+                        "metadata": metadata,
+                        "ocr": {},
+                        "transcript": {"text": "", "segments": []},
+                        "objects": {},
+                    })
+            else:
+                logger.info(f"[{vid}] Auto-preprocessing video: {vp}")
+                result = self.preprocess_video(video_path=vp, output_dir=output_dir)
+                shots_data[vid] = result["shots"]
+                all_preprocessed.append(result)
+
+        # Build/rebuild indices if we have new data
+        if all_preprocessed:
+            logger.info("Auto-building search indices...")
+            self.build_indices(preprocessed_data=all_preprocessed, save=True)
+
+        return shots_data
 
     # ========== KIS Task ==========
 
@@ -198,19 +315,21 @@ class VRAGPipeline:
         top_n: int = 100,
         top_k: int = 10,
         shots_data: Dict[str, List[Shot]] = None,
+        video_path: str = None,
         video_dir: str = None,
     ) -> List[Dict]:
         """
         Run Known-Item Search (KIS) task.
 
-        From the paper (Section 4.3.1): For KIS, query is directly processed
-        by the semantic retrieval module, then re-ranked.
+        Fully end-to-end: if no index exists, automatically preprocesses
+        video(s) and builds indices before running retrieval.
 
         Args:
             query: KIS query text description.
             top_n: Number of candidates from retrieval.
             top_k: Final top-K after re-ranking.
-            shots_data: Video shots data.
+            shots_data: Video shots data (auto-generated if not provided).
+            video_path: Path to video file (for auto-preprocessing).
             video_dir: Video files directory.
 
         Returns:
@@ -218,6 +337,15 @@ class VRAGPipeline:
         """
         logger.info(f"Running KIS task: '{query}'")
         start_time = time.time()
+
+        # Auto-prepare: preprocess + index if needed
+        shots_data = self._auto_prepare(
+            video_path=video_path,
+            video_dir=video_dir,
+            shots_data=shots_data,
+        )
+        if not video_dir and video_path:
+            video_dir = str(Path(video_path).parent)
 
         # Step 1: Multi-modal Retrieval
         retrieval = self._modules.get("multimodal_retrieval")
@@ -261,8 +389,12 @@ class VRAGPipeline:
         """
         Run Video Question Answering (VQA) task.
 
-        Complete pipeline (Paper Section 3.3):
-        1. Query Decomposition (GPT-4o)
+        Fully end-to-end: if no index exists, automatically preprocesses
+        video(s) and builds indices before running the full pipeline.
+
+        Pipeline (Paper Section 3.3):
+        0. Auto-prepare (preprocess + build index if needed)
+        1. Query Decomposition (Kimi Coding)
         2. Multi-modal Retrieval
         3. Re-ranking
         4. Filtering (chunk video, binary relevance)
@@ -270,17 +402,26 @@ class VRAGPipeline:
 
         Args:
             query: User question about a video.
-            video_path: Path to the target video (if known).
-            shots_data: Pre-computed shots data.
+            video_path: Path to the target video.
+            shots_data: Pre-computed shots data (auto-generated if not provided).
             video_dir: Directory containing video files.
             top_n: Retrieval candidates.
             top_k: Re-ranked candidates.
 
         Returns:
-            VRAGResult with answer, confidence, sources.
+            VRAGResult with answer and confidence.
         """
         logger.info(f"Running VQA task: '{query}'")
         start_time = time.time()
+
+        # Step 0: Auto-prepare - preprocess + build index if needed
+        shots_data = self._auto_prepare(
+            video_path=video_path,
+            video_dir=video_dir,
+            shots_data=shots_data,
+        )
+        if not video_dir and video_path:
+            video_dir = str(Path(video_path).parent)
 
         # Step 1: Query Decomposition
         decomposer = self._modules.get("query_decomposer")
@@ -384,6 +525,13 @@ class VRAGPipeline:
                                     ),
                                     "frames": frames,
                                 })
+        elif video_path and os.path.exists(video_path) and filtering:
+            # No retrieval results but we have a video - filter the whole video
+            logger.info("No retrieval results. Filtering entire video...")
+            relevant_chunks = filtering.filter_video(
+                query=vqa_query.question if hasattr(vqa_query, 'question') else query,
+                video_path=video_path,
+            )
 
         logger.info(f"Filtering: {len(relevant_chunks)} relevant chunks")
 
@@ -456,19 +604,24 @@ class VRAGPipeline:
             method=pp_cfg.get("shot_detection", {}).get("method", "pyscenedetect"),
             threshold=pp_cfg.get("shot_detection", {}).get("threshold", 27.0),
         )
-        shots = detector.detect(video_path)
+        shots = detector.detect(video_path, video_id)
         results["shots"] = shots
         save_shots(shots, os.path.join(output_dir, "shots.json"))
         logger.info(f"[{video_id}] Detected {len(shots)} shots")
 
         # 2. Keyframe Extraction
         logger.info(f"[{video_id}] Step 2: Keyframe extraction")
+        kf_cfg = pp_cfg.get("keyframe_extraction", {})
         kf_extractor = KeyframeExtractor(
-            method=pp_cfg.get("keyframe_extraction", {}).get("method", "semantic"),
-            threshold=pp_cfg.get("keyframe_extraction", {}).get("threshold", 0.85),
+            method=kf_cfg.get("method", "semantic"),
+            similarity_threshold=kf_cfg.get("similarity_threshold", 0.85),
+            max_keyframes_per_shot=kf_cfg.get("max_keyframes_per_shot", 5),
+            min_keyframes_per_shot=kf_cfg.get("min_keyframes_per_shot", 1),
         )
         keyframe_dir = os.path.join(output_dir, "keyframes")
-        shots = kf_extractor.extract(video_path, shots, keyframe_dir)
+        os.makedirs(keyframe_dir, exist_ok=True)
+        for idx, shot in enumerate(shots):
+            shots[idx] = kf_extractor.extract_keyframes(video_path, shot, keyframe_dir)
         results["shots"] = shots
         total_kf = sum(len(s.keyframe_paths) for s in shots)
         logger.info(f"[{video_id}] Extracted {total_kf} keyframes")
@@ -476,8 +629,12 @@ class VRAGPipeline:
         # 3. Feature Extraction
         logger.info(f"[{video_id}] Step 3: Feature extraction")
         fe_cfg = pp_cfg.get("feature_extraction", {})
-        model_names = fe_cfg.get("models", ["clip"])
-        feat_extractor = FeatureExtractor(model_names=model_names)
+        # Derive model names from config sub-keys (clip, blip2, beit3, internvl)
+        model_names = [k for k in fe_cfg if k in ("clip", "blip2", "beit3", "internvl")]
+        if not model_names:
+            model_names = ["clip"]
+        device = self.config.get("general", {}).get("device", "cuda")
+        feat_extractor = FeatureExtractor(device=device)
 
         features_per_model = {}
         metadata_list = []
@@ -496,29 +653,35 @@ class VRAGPipeline:
                     shot_features = feat_extractor.extract_features(
                         images, model_names
                     )
-                    for model_name, feats in shot_features.items():
-                        if model_name not in features_per_model:
-                            features_per_model[model_name] = []
-                        # Average features across keyframes for shot-level representation
-                        import numpy as np
-                        avg_feat = np.mean(feats, axis=0)
-                        features_per_model[model_name].append(avg_feat)
+                    if shot_features:
+                        for model_name, feats in shot_features.items():
+                            if model_name not in features_per_model:
+                                features_per_model[model_name] = []
+                            # Average features across keyframes for shot-level representation
+                            import numpy as np
+                            avg_feat = np.mean(feats, axis=0)
+                            features_per_model[model_name].append(avg_feat)
 
-                    metadata_list.append({
-                        "video_id": video_id,
-                        "shot_id": shot.shot_id,
-                    })
+                        # Only append metadata when features were actually extracted
+                        metadata_list.append({
+                            "video_id": video_id,
+                            "shot_id": shot.shot_id,
+                        })
 
         results["features"] = features_per_model
         results["metadata"] = metadata_list
 
-        # Save features
+        # Save features and metadata
         import numpy as np
+        import json as _json
         feat_dir = os.path.join(output_dir, "features")
         os.makedirs(feat_dir, exist_ok=True)
         for model_name, feats in features_per_model.items():
             feat_array = np.array(feats)
             np.save(os.path.join(feat_dir, f"{model_name}.npy"), feat_array)
+        # Save metadata so it can be reloaded aligned with features
+        with open(os.path.join(feat_dir, "metadata.json"), "w") as f:
+            _json.dump(metadata_list, f)
 
         logger.info(
             f"[{video_id}] Extracted features for {len(metadata_list)} shots "
@@ -528,14 +691,18 @@ class VRAGPipeline:
         # 4. OCR Extraction
         logger.info(f"[{video_id}] Step 4: OCR extraction")
         try:
+            ocr_cfg = pp_cfg.get("ocr", {})
             ocr = OCRExtractor(
-                method=pp_cfg.get("ocr", {}).get("method", "easyocr")
+                detector=ocr_cfg.get("text_detector", "deepsolo"),
+                recognizer=ocr_cfg.get("text_recognizer", "parseq"),
+                detection_confidence=ocr_cfg.get("detection_confidence", 0.5),
+                recognition_confidence=ocr_cfg.get("recognition_confidence", 0.7),
             )
             ocr_data = {}
             for shot in shots:
-                texts = ocr.extract_text_for_shot(shot)
-                if texts:
-                    ocr_data[shot.shot_id] = " ".join(texts)
+                text = ocr.extract_text_for_shot(shot)  # returns str
+                if text:
+                    ocr_data[shot.shot_id] = text
             results["ocr"] = ocr_data
             logger.info(
                 f"[{video_id}] OCR extracted for {len(ocr_data)} shots"
@@ -547,8 +714,11 @@ class VRAGPipeline:
         # 5. Audio Transcription
         logger.info(f"[{video_id}] Step 5: Audio transcription")
         try:
+            audio_cfg = pp_cfg.get("audio", {})
             transcriber = AudioTranscriber(
-                model_size=pp_cfg.get("audio", {}).get("model_size", "base")
+                model_name=audio_cfg.get("model_name", "openai/whisper-large-v3"),
+                language=audio_cfg.get("language"),
+                batch_size=audio_cfg.get("batch_size", 16),
             )
             transcript = transcriber.transcribe_video(video_path)
             results["transcript"] = transcript
@@ -563,8 +733,11 @@ class VRAGPipeline:
         # 6. Object Detection
         logger.info(f"[{video_id}] Step 6: Object detection")
         try:
+            obj_cfg = pp_cfg.get("object_detection", {})
             obj_detector = ObjectDetector(
-                method=pp_cfg.get("object_detection", {}).get("method", "yolov8")
+                model_name=obj_cfg.get("model_name", "co-detr"),
+                confidence_threshold=obj_cfg.get("confidence_threshold", 0.5),
+                nms_threshold=obj_cfg.get("nms_threshold", 0.5),
             )
             object_data = {}
             for shot in shots:

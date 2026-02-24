@@ -178,22 +178,34 @@ class FilteringModule:
         self._load_model()
 
         # Create chunks with overlap
-        chunks = chunk_video(
-            start_time=start_time,
-            end_time=end_time or float('inf'),
+        # chunk_video takes the total duration and returns (start, end) tuples
+        # relative to 0. We offset by start_time afterwards.
+        actual_end = end_time if end_time is not None else float('inf')
+        duration = actual_end - start_time
+        if duration <= 0:
+            return []
+
+        raw_chunks = chunk_video(
+            video_duration=duration,
             chunk_size=self.chunk_size,
             overlap=self.chunk_overlap,
         )
 
+        # Offset each chunk by the absolute start_time
+        chunks = [
+            (start_time + c_start, start_time + c_end)
+            for c_start, c_end in raw_chunks
+        ]
+
         relevant_chunks = []
 
-        for i, chunk in enumerate(chunks):
+        for i, (chunk_start, chunk_end) in enumerate(chunks):
             # Extract frames from this chunk
             try:
                 raw_frames = extract_frames(
                     video_path,
-                    start_time=chunk["start_time"],
-                    end_time=chunk["end_time"],
+                    start_time=chunk_start,
+                    end_time=chunk_end,
                     num_frames=self.max_frames_per_chunk,
                 )
                 frames = frames_to_pil_images(raw_frames)
@@ -209,8 +221,8 @@ class FilteringModule:
 
             chunk_result = {
                 "chunk_id": i,
-                "start_time": chunk["start_time"],
-                "end_time": chunk["end_time"],
+                "start_time": chunk_start,
+                "end_time": chunk_end,
                 "is_relevant": is_relevant,
                 "confidence": confidence,
             }

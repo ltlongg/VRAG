@@ -137,6 +137,7 @@ class AudioSearch:
                 entry = self._segment_map[idx]
                 results.append({
                     "video_id": entry["video_id"],
+                    "shot_id": entry.get("shot_id"),
                     "start_time": entry["start_time"],
                     "end_time": entry["end_time"],
                     "score": float(scores[idx]),
@@ -163,6 +164,7 @@ class AudioSearch:
                 entry = self._segment_map[idx]
                 results.append({
                     "video_id": entry["video_id"],
+                    "shot_id": entry.get("shot_id"),
                     "start_time": entry["start_time"],
                     "end_time": entry["end_time"],
                     "score": float(score),

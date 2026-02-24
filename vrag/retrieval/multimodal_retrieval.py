@@ -190,7 +190,16 @@ class MultimodalRetrievalSystem:
         fused_scores = {}
         for source, results in by_source.items():
             for rank, result in enumerate(results):
-                key = (result.get("video_id"), result.get("shot_id"))
+                # Use (video_id, shot_id) as key, falling back to time range
+                # for results without a shot_id (e.g. audio search)
+                shot_id = result.get("shot_id")
+                if shot_id is not None:
+                    key = (result.get("video_id"), shot_id)
+                else:
+                    key = (
+                        result.get("video_id"),
+                        f"t_{result.get('start_time', 0)}_{result.get('end_time', 0)}",
+                    )
                 if key not in fused_scores:
                     fused_scores[key] = {
                         "video_id": result.get("video_id"),

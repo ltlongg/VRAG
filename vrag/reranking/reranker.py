@@ -267,11 +267,11 @@ class Reranker:
             reverse=True,
         )
 
-        logger.info(
-            f"Re-ranking complete. Top score: "
-            f"{scored_results[0].get('relevance_score', 0):.3f} "
-            f"if scored_results else N/A"
+        top_msg = (
+            f"{scored_results[0].get('relevance_score', 0):.3f}"
+            if scored_results else "N/A"
         )
+        logger.info(f"Re-ranking complete. Top score: {top_msg}")
 
         return scored_results[:top_k]
 

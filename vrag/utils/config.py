@@ -19,12 +19,23 @@ DEFAULT_CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "config.y
 
 
 def _resolve_env_vars(value: str) -> str:
-    """Replace ${ENV_VAR} patterns with environment variable values."""
+    """Replace ${ENV_VAR} patterns with environment variable values.
+    Returns None for unresolved variables so downstream defaults can trigger."""
     pattern = re.compile(r"\$\{(\w+)\}")
+    has_unresolved = False
     def replacer(match):
+        nonlocal has_unresolved
         env_var = match.group(1)
-        return os.environ.get(env_var, match.group(0))
-    return pattern.sub(replacer, value)
+        env_val = os.environ.get(env_var)
+        if env_val is None:
+            has_unresolved = True
+            return match.group(0)  # keep placeholder temporarily
+        return env_val
+    resolved = pattern.sub(replacer, value)
+    # If the entire value was a single unresolved var, return None
+    if has_unresolved and pattern.fullmatch(value):
+        return None
+    return resolved
 
 
 def _resolve_config(config: Any) -> Any:
