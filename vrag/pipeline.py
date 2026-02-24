@@ -396,10 +396,10 @@ class VRAGPipeline:
             )
         else:
             result = VRAGResult(
+                query=query,
                 answer="Could not generate answer - no relevant content found.",
                 confidence=0.0,
                 task_type="vqa",
-                sources=[],
             )
 
         elapsed = time.time() - start_time

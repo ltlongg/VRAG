@@ -157,10 +157,10 @@ class AnsweringModule:
 
         if not relevant_chunks:
             return VRAGResult(
+                query=question,
                 answer="I could not find relevant video content to answer this question.",
                 confidence=0.0,
                 task_type="vqa",
-                sources=[],
             )
 
         # Sort by confidence and limit
@@ -175,10 +175,10 @@ class AnsweringModule:
 
         if not all_frames:
             return VRAGResult(
+                query=question,
                 answer="No frames available from the relevant video segments.",
                 confidence=0.0,
                 task_type="vqa",
-                sources=[],
             )
 
         # Generate answer
@@ -210,10 +210,10 @@ class AnsweringModule:
         avg_confidence = sum(c.get("confidence", 0) for c in chunks) / len(chunks)
 
         return VRAGResult(
+            query=question,
             answer=answer,
             confidence=avg_confidence,
             task_type="vqa",
-            sources=sources,
         )
 
     def _aggregate_frames(self, chunks: List[Dict]) -> List:
