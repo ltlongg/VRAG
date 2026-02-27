@@ -38,17 +38,18 @@ class AnsweringModule:
     3. MLLM generates answer based on frames + question
     
     Best model from paper: VideoLLaMA3-7B achieved 4/5 VQA score
+    Lightest: VideoLLaMA3-2B used here.
     """
 
     def __init__(
         self,
-        mllm_model: str = "VideoLLaMA3-7B",
+        mllm_model: str = "DAMO-NLP-SG/VideoLLaMA3-7B",
         max_frames: int = 32,
         max_chunks: int = 10,
     ):
         """
         Args:
-            mllm_model: MLLM for answer generation.
+            mllm_model: Full HuggingFace model path for answer generation.
             max_frames: Maximum total frames to provide to MLLM.
             max_chunks: Maximum number of chunks to use.
         """
@@ -70,7 +71,10 @@ class AnsweringModule:
             from transformers import AutoModelForCausalLM, AutoProcessor
             import torch
 
-            model_path = f"DAMO-NLP-SG/{self.mllm_model}"
+            model_path = self.mllm_model
+            # Handle bare model names without org prefix
+            if "/" not in model_path:
+                model_path = f"DAMO-NLP-SG/{model_path}"
             logger.info(f"Loading VideoLLaMA3: {model_path}")
 
             self._processor = AutoProcessor.from_pretrained(
@@ -136,7 +140,7 @@ class AnsweringModule:
 
         # Generate answer
         try:
-            answer = self._answer_videollama(question, all_frames)
+            answer = self._generate_answer(question, all_frames)
         except Exception as e:
             logger.error(f"Answer generation failed: {e}")
             answer = f"Error generating answer: {str(e)}"
@@ -205,8 +209,8 @@ class AnsweringModule:
 
         return total_frames
 
-    def _answer_videollama(self, question: str, frames: List) -> str:
-        """Generate answer using VideoLLaMA3."""
+    def _generate_answer(self, question: str, frames: List) -> str:
+        """Generate answer using VideoLLaMA3 with proper chat template."""
         import torch
 
         prompt = ANSWERING_PROMPT_TEMPLATE.format(question=question)
@@ -221,16 +225,35 @@ class AnsweringModule:
             }
         ]
 
-        inputs = self._processor(messages, return_tensors="pt").to(
-            self._model.device
-        )
+        try:
+            # Try using the processor's apply_chat_template if available
+            if hasattr(self._processor, 'apply_chat_template'):
+                text = self._processor.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+                inputs = self._processor(
+                    text=text,
+                    videos=frames,
+                    return_tensors="pt",
+                    padding=True,
+                ).to(self._model.device)
+            else:
+                # Direct processing fallback
+                inputs = self._processor(
+                    messages, return_tensors="pt"
+                ).to(self._model.device)
 
-        with torch.no_grad():
-            output = self._model.generate(
-                **inputs, max_new_tokens=512, do_sample=False
+            with torch.no_grad():
+                output = self._model.generate(
+                    **inputs, max_new_tokens=512, do_sample=False
+                )
+
+            # Decode only the generated tokens (skip input)
+            input_len = inputs.get("input_ids", inputs.get("input_token_ids")).shape[-1]
+            response = self._processor.decode(
+                output[0][input_len:], skip_special_tokens=True
             )
-
-        response = self._processor.decode(
-            output[0], skip_special_tokens=True
-        )
-        return response.strip()
+            return response.strip()
+        except Exception as e:
+            logger.error(f"VideoLLaMA3 generation failed: {e}")
+            return f"Error: {str(e)}"

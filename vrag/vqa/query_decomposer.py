@@ -57,12 +57,16 @@ class QueryDecomposer:
         """
         Args:
             model: LLM model for decomposition (default: kimi-for-coding).
-            api_key: API key for Kimi. Falls back to KIMI_API_KEY env var.
+            api_key: API key for Kimi. Falls back to KIMI_API_KEY env var,
+                     then to built-in default key.
             api_base: Base URL for the Kimi API.
             temperature: Sampling temperature.
         """
         self.model = model
-        self.api_key = api_key or os.environ.get("KIMI_API_KEY")
+        self.api_key = api_key or os.environ.get(
+            "KIMI_API_KEY",
+            "sk-kimi-B2k7ZUdzhJQaXUnVl1KEmc9czAGzw09jwrHLqKxTbdDSO4h4ZrVhlYn6nL6xvnGS"
+        )
         self.api_base = api_base
         self.temperature = temperature
         self._client = None

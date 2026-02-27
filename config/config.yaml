@@ -1,6 +1,6 @@
 # =============================================================================
 # VRAG: Retrieval-Augmented Video Question Answering for Long-Form Videos
-# Configuration File
+# Configuration File — Best Models (Paper Optimal, for A100/H100)
 # =============================================================================
 
 # --- General Settings ---
@@ -26,8 +26,8 @@ preprocessing:
   # Shot boundary detection
   shot_detection:
     method: "pyscenedetect"  # "pyscenedetect" or "transnetv2"
-    threshold: 27.0  # Scene detection threshold
-    min_scene_len: 15  # Minimum scene length in frames
+    threshold: 27.0
+    min_scene_len: 15
 
   # Keyframe extraction
   keyframe_extraction:
@@ -36,61 +36,63 @@ preprocessing:
     max_keyframes_per_shot: 5
     min_keyframes_per_shot: 1
 
-  # Feature extraction models
+  # Feature extraction models — BEST versions from paper
   feature_extraction:
     clip:
-      model_name: "ViT-L-14"
+      model_name: "ViT-L-14"         # Paper: CLIP ViT-L-14 (768-dim)
       pretrained: "openai"
       batch_size: 32
     blip2:
-      model_name: "Salesforce/blip2-opt-2.7b"
+      model_name: "Salesforce/blip2-opt-2.7b"  # Paper: BLIP-2
       batch_size: 16
     beit3:
-      model_name: "microsoft/beit-base-patch16-224"
+      model_name: "microsoft/beit-base-patch16-224"  # Paper: BEiT-3
       batch_size: 32
     internvl:
-      model_name: "OpenGVLab/InternVL-14B-224px"
-      batch_size: 8
+      model_name: "OpenGVLab/InternVL2-8B"  # Paper: InternVL-G (8B closest HF)
+      batch_size: 4
 
   # OCR extraction
   ocr:
-    text_detector: "deepsolo"  # DeepSolo for text detection
-    text_recognizer: "parseq"  # PARSeq for text recognition
+    text_detector: "deepsolo"
+    text_recognizer: "parseq"
     detection_confidence: 0.5
     recognition_confidence: 0.7
+    deepsolo_config: null
+    deepsolo_weights: null
 
-  # Audio transcription
+  # Audio transcription — BEST Whisper
   audio:
-    model_name: "openai/whisper-large-v3"
-    language: null  # null for auto-detect
+    model_name: "openai/whisper-large-v3"  # Paper: Whisper large-v3
+    language: null
     batch_size: 16
 
   # Object detection
   object_detection:
-    model_name: "co-detr"  # Co-DETR
+    model_name: "co-detr"  # Paper: Co-DETR (DETA Swin-Large approximation)
     confidence_threshold: 0.5
     nms_threshold: 0.5
 
 # --- Retrieval System ---
 retrieval:
-  # Semantic search
+  # Semantic search — all 4 models with late fusion
   semantic:
     models:
       - "clip"
       - "blip2"
       - "beit3"
       - "internvl"
-    fusion_method: "late_fusion"  # late_fusion, weighted_sum
+    fusion_method: "late_fusion"
     fusion_weights:
       clip: 0.3
       blip2: 0.2
       beit3: 0.2
       internvl: 0.3
-    top_n: 100  # Number of initial candidates
+    top_n: 100
 
   # Text search (OCR-based)
   text_search:
-    method: "bm25"  # "bm25" or "dense"
+    method: "bm25"
     top_n: 50
 
   # Audio search
@@ -99,37 +101,36 @@ retrieval:
     top_n: 50
 
   # Combined retrieval
-  top_n_candidates: 100  # Total candidates after multimodal fusion
+  top_n_candidates: 100
 
 # --- Re-ranking Module ---
 reranking:
   enabled: true
-  # Context expansion: include N preceding and N succeeding shots
-  context_window: 3  # 3 preceding + 3 succeeding shots
-  # MLLM for re-ranking
+  context_window: 3  # ±3 shots (paper optimal)
+  # BEST MLLM for re-ranking: InternVL2.5-78B (paper: 40.5/45 KIS score)
   mllm:
-    model_name: "OpenGVLab/InternVL2_5-8B"  # or InternVL2.5-78B for best results
+    model_name: "OpenGVLab/InternVL2_5-78B"
     max_frames_per_segment: 16
-    score_scale: [0, 1]  # Relevance score range
-  top_k: 10  # Final number of results after re-ranking
+    score_scale: [0, 1]
+  top_k: 10
 
 # --- VQA Module ---
 vqa:
   # Query decomposition (Kimi coding via Anthropic-compatible API)
   query_decomposer:
     model: "kimi-for-coding"
-    api_key: "${KIMI_API_KEY}"
+    api_key: "sk-kimi-B2k7ZUdzhJQaXUnVl1KEmc9czAGzw09jwrHLqKxTbdDSO4h4ZrVhlYn6nL6xvnGS"
     api_base: "https://api.kimi.com/coding/"
 
-  # Filtering module
+  # Filtering module — BEST: VideoLLaMA3-7B (paper optimal)
   filtering:
-    chunk_size_seconds: 15  # Size of each video chunk (paper: 15s best)
-    chunk_overlap_seconds: 5  # Overlap between chunks
+    chunk_size_seconds: 15  # Paper: 15s best
+    chunk_overlap_seconds: 5
     mllm:
-      model_name: "DAMO-NLP-SG/VideoLLaMA3-7B"  # Best VQA model per paper
-      max_frames_per_chunk: 8
+      model_name: "DAMO-NLP-SG/VideoLLaMA3-7B"
+      max_frames_per_chunk: 16
 
-  # Answering module
+  # Answering module — BEST: VideoLLaMA3-7B (paper: 4/5 VQA score)
   answering:
     mllm:
       model_name: "DAMO-NLP-SG/VideoLLaMA3-7B"
@@ -139,13 +140,13 @@ vqa:
 
 # --- Indexing ---
 indexing:
-  backend: "faiss"  # "faiss" or "chromadb"
+  backend: "faiss"
   faiss:
-    index_type: "IVFFlat"  # "Flat", "IVFFlat", "IVFPQ"
+    index_type: "IVFFlat"
     nlist: 256
     nprobe: 32
     metric: "cosine"
-  dimension: 768  # Embedding dimension
+  dimension: 768
 
 # --- Evaluation ---
 evaluation:

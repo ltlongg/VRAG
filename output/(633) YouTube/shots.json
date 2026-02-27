@@ -1,0 +1,222 @@
+[
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 0,
+    "start_frame": 0,
+    "end_frame": 50,
+    "start_time": 0.0,
+    "end_time": 1.6666666666666667,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 1,
+    "start_frame": 50,
+    "end_frame": 80,
+    "start_time": 1.6666666666666667,
+    "end_time": 2.6666666666666665,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 2,
+    "start_frame": 80,
+    "end_frame": 133,
+    "start_time": 2.6666666666666665,
+    "end_time": 4.433333333333334,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 3,
+    "start_frame": 133,
+    "end_frame": 174,
+    "start_time": 4.433333333333334,
+    "end_time": 5.8,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 4,
+    "start_frame": 174,
+    "end_frame": 231,
+    "start_time": 5.8,
+    "end_time": 7.7,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 5,
+    "start_frame": 231,
+    "end_frame": 266,
+    "start_time": 7.7,
+    "end_time": 8.866666666666667,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 6,
+    "start_frame": 266,
+    "end_frame": 331,
+    "start_time": 8.866666666666667,
+    "end_time": 11.033333333333333,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 7,
+    "start_frame": 331,
+    "end_frame": 381,
+    "start_time": 11.033333333333333,
+    "end_time": 12.7,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 8,
+    "start_frame": 381,
+    "end_frame": 441,
+    "start_time": 12.7,
+    "end_time": 14.7,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 9,
+    "start_frame": 441,
+    "end_frame": 478,
+    "start_time": 14.7,
+    "end_time": 15.933333333333334,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 10,
+    "start_frame": 478,
+    "end_frame": 525,
+    "start_time": 15.933333333333334,
+    "end_time": 17.5,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 11,
+    "start_frame": 525,
+    "end_frame": 546,
+    "start_time": 17.5,
+    "end_time": 18.2,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 12,
+    "start_frame": 546,
+    "end_frame": 581,
+    "start_time": 18.2,
+    "end_time": 19.366666666666667,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 13,
+    "start_frame": 581,
+    "end_frame": 697,
+    "start_time": 19.366666666666667,
+    "end_time": 23.233333333333334,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 14,
+    "start_frame": 697,
+    "end_frame": 735,
+    "start_time": 23.233333333333334,
+    "end_time": 24.5,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 15,
+    "start_frame": 735,
+    "end_frame": 814,
+    "start_time": 24.5,
+    "end_time": 27.133333333333333,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 16,
+    "start_frame": 814,
+    "end_frame": 856,
+    "start_time": 27.133333333333333,
+    "end_time": 28.533333333333335,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 17,
+    "start_frame": 856,
+    "end_frame": 907,
+    "start_time": 28.533333333333335,
+    "end_time": 30.233333333333334,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 18,
+    "start_frame": 907,
+    "end_frame": 1126,
+    "start_time": 30.233333333333334,
+    "end_time": 37.53333333333333,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  },
+  {
+    "video_id": "(633) YouTube",
+    "shot_id": 19,
+    "start_frame": 1126,
+    "end_frame": 1155,
+    "start_time": 37.53333333333333,
+    "end_time": 38.5,
+    "keyframe_indices": [],
+    "keyframe_paths": [],
+    "metadata": {}
+  }
+]

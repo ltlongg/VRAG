@@ -222,7 +222,7 @@ class AudioTranscriber:
     def transcribe_video(
         self,
         video_path: str,
-        temp_dir: str = "/tmp/vrag_audio",
+        temp_dir: str = None,
     ) -> Dict:
         """
         Extract audio from a video and transcribe it.
@@ -235,7 +235,10 @@ class AudioTranscriber:
             Transcription result dictionary.
         """
         from vrag.utils.video_utils import extract_audio
+        import tempfile
 
+        if temp_dir is None:
+            temp_dir = os.path.join(tempfile.gettempdir(), "vrag_audio")
         os.makedirs(temp_dir, exist_ok=True)
         video_name = Path(video_path).stem
         audio_path = os.path.join(temp_dir, f"{video_name}.wav")

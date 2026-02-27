@@ -113,11 +113,6 @@ class IndexBuilder:
     ):
         """
         Add vectors to an existing index (incremental update).
-
-        Args:
-            model_name: Model name.
-            features: New feature vectors.
-            metadata: Metadata for new vectors.
         """
         import faiss
 
@@ -189,14 +184,6 @@ class IndexBuilder:
     ) -> List[Dict]:
         """
         Search using a pre-computed feature vector.
-
-        Args:
-            model_name: Which model's index to search.
-            query_vector: Query feature vector.
-            top_k: Number of results.
-
-        Returns:
-            List of result dicts with score and metadata.
         """
         import faiss
 
@@ -227,17 +214,7 @@ class IndexBuilder:
         image,
         top_k: int = 100,
     ) -> List[Dict]:
-        """
-        Search using an image query.
-
-        Args:
-            model_name: Which model's index.
-            image: PIL Image.
-            top_k: Number of results.
-
-        Returns:
-            List of result dicts.
-        """
+        """Search using an image query."""
         image_features = self._get_image_features(model_name, image)
         if image_features is None:
             return []
@@ -249,12 +226,7 @@ class IndexBuilder:
         return model_name in self._indices
 
     def save(self, prefix: str = ""):
-        """
-        Save all indices and metadata to disk.
-
-        Args:
-            prefix: Optional prefix for filenames.
-        """
+        """Save all indices and metadata to disk."""
         import faiss
 
         for model_name, index in self._indices.items():
@@ -269,13 +241,7 @@ class IndexBuilder:
             logger.info(f"Saved index: {index_path} ({index.ntotal} vectors)")
 
     def load(self, prefix: str = "", model_names: List[str] = None):
-        """
-        Load indices and metadata from disk.
-
-        Args:
-            prefix: Optional prefix for filenames.
-            model_names: Specific models to load. If None, loads all found.
-        """
+        """Load indices and metadata from disk."""
         import faiss
 
         if model_names is None:
@@ -351,19 +317,25 @@ class IndexBuilder:
             elif "blip" in model_name.lower():
                 self._feature_extractors[model_name] = self._make_blip_extractor()
             elif "beit" in model_name.lower():
-                self._feature_extractors[model_name] = self._make_beit_extractor()
-            elif "internvl" in model_name.lower():
-                # InternVL image features use InternViT which outputs ~3200-dim
-                # vectors — incompatible with CLIP's 768-dim text space.
-                # Text-based search is disabled for InternVL indices; they can
-                # still be queried via image features when cross-modal search
-                # is performed.
-                logger.warning(
-                    f"Text search is not supported for InternVL index '{model_name}': "
-                    "InternVL image features (~3200-dim) cannot be queried with "
-                    "CLIP text features (768-dim). Skipping InternVL text extractor."
+                # BEiT-3 image features are 768-dim; text features use CLIP as
+                # proxy (the spaces are not perfectly aligned but both 768-dim).
+                logger.info(
+                    f"Using CLIP text encoder as proxy for BEiT-3 index '{model_name}'. "
+                    "Note: feature spaces are not perfectly aligned."
                 )
-                self._feature_extractors[model_name] = None
+                self._feature_extractors[model_name] = self._make_clip_extractor()
+            elif "internvl" in model_name.lower():
+                # InternVL image features use InternViT which outputs different-dim
+                # vectors. Text search requires matching dimensions.
+                logger.warning(
+                    f"Text search for InternVL index '{model_name}': "
+                    "attempting CLIP text encoder as proxy. "
+                    "Results may be suboptimal due to mismatched feature spaces."
+                )
+                # Try CLIP as proxy, it will work if InternVL features
+                # happen to be same dimension; otherwise search will fail
+                # gracefully.
+                self._feature_extractors[model_name] = self._make_clip_extractor()
             else:
                 logger.warning(f"No extractor for model: {model_name}")
                 self._feature_extractors[model_name] = None
@@ -396,11 +368,16 @@ class IndexBuilder:
         return extract
 
     def _make_blip_extractor(self):
-        """Create BLIP-2 text feature extractor."""
+        """
+        Create BLIP-2 text feature extractor.
+        
+        Uses get_text_features() which produces 256-dim ITC-projected vectors,
+        matching the 256-dim image features from feature_extraction.py.
+        """
         import torch
-        from transformers import Blip2Model, AutoProcessor
+        from transformers import Blip2Model, Blip2Processor
 
-        processor = AutoProcessor.from_pretrained(
+        processor = Blip2Processor.from_pretrained(
             "Salesforce/blip2-opt-2.7b"
         )
         model = Blip2Model.from_pretrained(
@@ -415,28 +392,16 @@ class IndexBuilder:
                 inputs = processor(text=text, return_tensors="pt").to(
                     model.device
                 )
-                # get_text_features returns (batch, output_dim) — already
-                # pooled via CLS token.  Do NOT call .mean(dim=1) here;
-                # that would incorrectly collapse the feature dimension.
+                # get_text_features returns (batch, 256) — ITC-projected
                 text_features = model.get_text_features(
                     input_ids=inputs.input_ids,
                     attention_mask=inputs.get("attention_mask"),
                 )  # (batch, 256)
-                features = text_features / text_features.norm(dim=-1, keepdim=True)
+                features = text_features.float()
+                features = features / features.norm(dim=-1, keepdim=True)
                 return features.cpu().numpy().flatten()
 
         return extract
-
-    def _make_beit_extractor(self):
-        """Create BEiT-3 text feature extractor.
-
-        Note: BEiT-3 (base) image features are 768-dim, matching CLIP text
-        features in dimension. However, the spaces are NOT aligned (BEiT-3
-        was not trained with a contrastive text-image objective the way CLIP
-        was). This will not cause a dimension crash but text queries against
-        the BEiT-3 index will return semantically approximate results at best.
-        """
-        return self._make_clip_extractor()
 
     def get_stats(self) -> Dict:
         """Get statistics about loaded indices."""

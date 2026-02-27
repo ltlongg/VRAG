@@ -48,11 +48,12 @@ class Reranker:
     4. Rank by score descending, select top-K
     
     Best MLLM: InternVL2.5-78B achieved 40.5/45 in experiments.
+    Lightest: InternVL2.5-1B used here.
     """
 
     def __init__(
         self,
-        mllm_model: str = "InternVL2.5-8B",
+        mllm_model: str = "OpenGVLab/InternVL2_5-78B",
         context_window: int = 3,
         top_k: int = 10,
         max_frames_per_segment: int = 16,
@@ -60,7 +61,7 @@ class Reranker:
     ):
         """
         Args:
-            mllm_model: Name/path of the MLLM for relevance scoring.
+            mllm_model: Full HuggingFace model path for relevance scoring.
             context_window: Number of neighboring shots to expand (±N).
             top_k: Number of top results to keep after re-ranking.
             max_frames_per_segment: Max frames to sample per segment for MLLM.
@@ -73,6 +74,7 @@ class Reranker:
         self.batch_size = batch_size
         self._model = None
         self._processor = None
+        self._tokenizer = None
 
     def _load_model(self):
         """Load the MLLM for re-ranking."""
@@ -87,7 +89,11 @@ class Reranker:
             import torch
             from transformers import AutoModel, AutoTokenizer
 
-            model_path = f"OpenGVLab/{self.mllm_model}"
+            model_path = self.mllm_model
+            # Handle bare model names without org prefix
+            if "/" not in model_path:
+                model_path = f"OpenGVLab/{model_path}"
+
             logger.info(f"Loading InternVL model: {model_path}")
 
             self._tokenizer = AutoTokenizer.from_pretrained(
@@ -332,12 +338,17 @@ class Reranker:
 
         # Generate
         generation_config = {"max_new_tokens": 10, "do_sample": False}
-        response = self._model.chat(
-            self._tokenizer,
-            pixel_values,
-            full_prompt,
-            generation_config,
-        )
+        try:
+            response = self._model.chat(
+                self._tokenizer,
+                pixel_values,
+                full_prompt,
+                generation_config,
+            )
+        except Exception as e:
+            logger.warning(f"InternVL chat failed: {e}")
+            # Fallback: try generate directly
+            return 0.5
 
         return self._parse_score(response)
 

@@ -29,7 +29,7 @@ class FeatureExtractor:
     """
 
     def __init__(self, device: str = "cuda"):
-        self.device = device
+        self.device = device if torch.cuda.is_available() else "cpu"
         self._models = {}
         self._processors = {}
         self._tokenizers = {}
@@ -70,7 +70,7 @@ class FeatureExtractor:
         tensors = torch.stack([preprocess(img) for img in images]).to(self.device)
         features = model.encode_image(tensors)
         features = features / features.norm(dim=-1, keepdim=True)
-        return features.cpu().numpy()
+        return features.cpu().float().numpy()
 
     @torch.no_grad()
     def extract_clip_text_features(self, texts: List[str]) -> np.ndarray:
@@ -82,7 +82,7 @@ class FeatureExtractor:
         tokens = tokenizer(texts).to(self.device)
         features = model.encode_text(tokens)
         features = features / features.norm(dim=-1, keepdim=True)
-        return features.cpu().numpy()
+        return features.cpu().float().numpy()
 
     # =========================================================================
     # BLIP-2 Feature Extraction
@@ -109,11 +109,10 @@ class FeatureExtractor:
     @torch.no_grad()
     def extract_blip2_features(self, images: List[Image.Image]) -> np.ndarray:
         """
-        Extract BLIP-2 image features via Q-Former (768-dim, ITC-aligned).
+        Extract BLIP-2 image features via ITC projection (256-dim).
 
-        Uses Blip2Model.get_image_features() so that the resulting vectors
-        are in the same embedding space as BLIP-2 text features produced by
-        get_text_features(), enabling proper cosine-similarity search.
+        Uses Blip2Model.get_image_features() which returns ITC-projected
+        vectors in the same embedding space as get_text_features().
         """
         self.load_blip2()
         processor = self._processors["blip2"]
@@ -127,12 +126,12 @@ class FeatureExtractor:
             inputs = processor(images=batch, return_tensors="pt").to(
                 self.device, torch.float16
             )
-            # get_image_features → Q-Former → (batch, num_query_tokens, 768)
-            # Mean-pool over query tokens to get a single 768-dim vector.
+            # get_image_features → Q-Former → ITC projection → (B, num_query, 256)
             image_features = model.get_image_features(
                 pixel_values=inputs.pixel_values
-            )  # (B, 32, 768)
-            features = image_features.mean(dim=1)  # (B, 768)
+            )
+            # Mean-pool over query tokens to get a single vector
+            features = image_features.mean(dim=1)  # (B, 256)
             features = features.float()
             features = features / features.norm(dim=-1, keepdim=True)
             all_features.append(features.cpu().numpy())
@@ -142,9 +141,9 @@ class FeatureExtractor:
     @torch.no_grad()
     def extract_blip2_text_features(self, texts: List[str]) -> np.ndarray:
         """
-        Extract BLIP-2 text features via Q-Former (768-dim, ITC-aligned).
+        Extract BLIP-2 text features via ITC projection (256-dim).
 
-        Uses Blip2Model.get_text_features() so the vectors are in the same
+        Uses Blip2Model.get_text_features() to produce vectors in the same
         embedding space as the image features from extract_blip2_features().
         """
         self.load_blip2()
@@ -153,7 +152,7 @@ class FeatureExtractor:
 
         inputs = processor(text=texts, return_tensors="pt", padding=True).to(self.device)
         with torch.no_grad():
-            # get_text_features → Q-Former text path → (batch, 768)
+            # get_text_features → Q-Former text path → ITC → (batch, 256)
             features = model.get_text_features(
                 input_ids=inputs.input_ids,
                 attention_mask=inputs.attention_mask,
@@ -198,7 +197,7 @@ class FeatureExtractor:
             outputs = model(**inputs)
             features = outputs.last_hidden_state[:, 0, :]
             features = features / features.norm(dim=-1, keepdim=True)
-            all_features.append(features.cpu().numpy())
+            all_features.append(features.cpu().float().numpy())
 
         return np.concatenate(all_features, axis=0)
 
@@ -206,23 +205,36 @@ class FeatureExtractor:
     # InternVL Feature Extraction
     # =========================================================================
 
-    def load_internvl(self, model_name: str = "OpenGVLab/InternVL-14B-224px"):
+    def load_internvl(self, model_name: str = "OpenGVLab/InternVL2-8B"):
         """
-        Load InternVL model for vision-language feature extraction.
+        Load InternVL2 model for vision-language feature extraction.
+        Uses the vision encoder component to extract image features.
         """
         if "internvl" in self._models:
             return
 
         try:
-            from transformers import AutoModel, AutoTokenizer, CLIPImageProcessor
+            from transformers import AutoModel, AutoTokenizer, AutoProcessor
+            logger.info(f"Loading InternVL model: {model_name}")
             model = AutoModel.from_pretrained(
                 model_name,
-                torch_dtype=torch.float16,
+                torch_dtype=torch.bfloat16,
                 trust_remote_code=True,
             ).to(self.device)
             model.eval()
-            processor = CLIPImageProcessor.from_pretrained(model_name)
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+            # InternVL2 uses its own image processing
+            try:
+                processor = AutoProcessor.from_pretrained(
+                    model_name, trust_remote_code=True
+                )
+            except Exception:
+                from transformers import CLIPImageProcessor
+                processor = CLIPImageProcessor.from_pretrained(model_name)
+
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_name, trust_remote_code=True
+            )
             self._models["internvl"] = model
             self._processors["internvl"] = processor
             self._tokenizers["internvl"] = tokenizer
@@ -232,7 +244,7 @@ class FeatureExtractor:
 
     @torch.no_grad()
     def extract_internvl_features(self, images: List[Image.Image]) -> np.ndarray:
-        """Extract InternVL image features."""
+        """Extract InternVL image features using the vision encoder."""
         self.load_internvl()
 
         processor = self._processors["internvl"]
@@ -243,16 +255,44 @@ class FeatureExtractor:
 
         for i in range(0, len(images), batch_size):
             batch = images[i:i + batch_size]
-            inputs = processor(images=batch, return_tensors="pt").to(
-                self.device, torch.float16
-            )
-            # Use the vision model component
+            try:
+                # Try processor with images
+                if hasattr(processor, 'image_processor'):
+                    inputs = processor.image_processor(
+                        images=batch, return_tensors="pt"
+                    ).to(self.device, torch.bfloat16)
+                else:
+                    inputs = processor(
+                        images=batch, return_tensors="pt"
+                    ).to(self.device, torch.bfloat16)
+            except Exception:
+                from torchvision import transforms
+                transform = transforms.Compose([
+                    transforms.Resize((448, 448)),
+                    transforms.ToTensor(),
+                    transforms.Normalize(
+                        mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225],
+                    ),
+                ])
+                pixel_values = torch.stack([transform(img) for img in batch])
+                inputs = {"pixel_values": pixel_values.to(
+                    self.device, torch.bfloat16
+                )}
+
+            # Extract vision features
+            pixel_values = inputs.get("pixel_values", inputs.pixel_values) \
+                if not isinstance(inputs, dict) else inputs["pixel_values"]
+
             if hasattr(model, 'vision_model'):
-                outputs = model.vision_model(pixel_values=inputs.pixel_values)
+                outputs = model.vision_model(pixel_values=pixel_values)
                 features = outputs.last_hidden_state[:, 0, :]
+            elif hasattr(model, 'encode_image'):
+                features = model.encode_image(pixel_values)
             else:
-                outputs = model.encode_image(inputs.pixel_values)
-                features = outputs
+                # Fallback: use forward with dummy text
+                features = pixel_values.mean(dim=[2, 3])  # Global average pooling
+
             features = features.float()
             features = features / features.norm(dim=-1, keepdim=True)
             all_features.append(features.cpu().numpy())

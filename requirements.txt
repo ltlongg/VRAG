@@ -30,10 +30,11 @@ faiss-cpu>=1.7.4
 # BM25 Text Search
 rank-bm25>=0.2.2
 
-# OCR: DeepSolo + PARSeq
+# OCR: DeepSolo + PARSeq (primary, install manually)
 # detectron2 - install manually: https://github.com/facebookresearch/detectron2
 # adet (AdelaiDet) - install manually: https://github.com/aim-uofa/AdelaiDet
 # strhub (PARSeq) - install manually: pip install strhub
+easyocr>=1.7.0  # OCR fallback (works out of the box)
 
 # Audio Transcription: Whisper (install one of the following)
 faster-whisper>=1.0.0          # Recommended (fastest)

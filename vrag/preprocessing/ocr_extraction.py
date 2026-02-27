@@ -5,6 +5,8 @@ Extracts on-screen text from video frames for text-based video retrieval.
 From the paper (Section 3.1): "We employ optical character recognition (OCR) to 
 extract textual content from video frames. Specifically, DeepSolo is utilized for 
 text detection, while PARSeq is employed for text recognition."
+
+Falls back to EasyOCR when DeepSolo+PARSeq are not installed.
 """
 
 import logging
@@ -24,8 +26,8 @@ class OCRExtractor:
     Extract on-screen text from video keyframes.
     
     Architecture (per paper):
-      - Text Detection: DeepSolo
-      - Text Recognition: PARSeq
+      - Primary: DeepSolo (detection) + PARSeq (recognition)
+      - Fallback: EasyOCR (when DeepSolo/PARSeq not installed)
     """
 
     def __init__(
@@ -35,12 +37,16 @@ class OCRExtractor:
         detection_confidence: float = 0.5,
         recognition_confidence: float = 0.7,
         device: str = "cuda",
+        deepsolo_config: Optional[str] = None,
+        deepsolo_weights: Optional[str] = None,
     ):
         self.detector = detector
         self.recognizer = recognizer
         self.detection_confidence = detection_confidence
         self.recognition_confidence = recognition_confidence
         self.device = device
+        self.deepsolo_config = deepsolo_config
+        self.deepsolo_weights = deepsolo_weights
         self._ocr_engine = None
 
     def _load_engine(self):
@@ -48,7 +54,26 @@ class OCRExtractor:
         if self._ocr_engine is not None:
             return
 
-        self._load_deepsolo_parseq()
+        # Try DeepSolo + PARSeq first (paper's method)
+        try:
+            self._load_deepsolo_parseq()
+            return
+        except (ImportError, Exception) as e:
+            logger.warning(
+                f"DeepSolo+PARSeq not available ({e}). "
+                "Falling back to EasyOCR."
+            )
+
+        # Fallback to EasyOCR
+        try:
+            self._load_easyocr()
+            return
+        except ImportError:
+            raise ImportError(
+                "No OCR engine available. Install one of:\n"
+                "  1. DeepSolo + PARSeq (via detectron2/adet + strhub)\n"
+                "  2. EasyOCR: pip install easyocr"
+            )
 
     def _load_deepsolo_parseq(self):
         """
@@ -57,30 +82,43 @@ class OCRExtractor:
         DeepSolo: 'Let Transformer Decoder with Explicit Points Solo for Text Spotting'
         PARSeq: 'Scene Text Recognition with Permuted Autoregressive Sequence Models'
         """
-        try:
-            # Try loading DeepSolo from detectron2/adet
-            from adet.config import get_cfg
-            from detectron2.engine import DefaultPredictor
-            
-            cfg = get_cfg()
-            cfg.merge_from_file("configs/DeepSolo/R_50/TotalText/finetune_150k.yaml")
-            cfg.MODEL.WEIGHTS = "models/deepsolo_totaltext.pth"
-            cfg.MODEL.DEVICE = self.device
-            self._detector_model = DefaultPredictor(cfg)
-            
-            # Load PARSeq
-            from strhub.data.module import SceneTextDataModule
-            import torch
-            self._recognizer_model = torch.hub.load(
-                'baudm/parseq', 'parseq', pretrained=True
-            ).eval().to(self.device)
-            self._ocr_engine = "deepsolo_parseq"
-            logger.info("Loaded DeepSolo + PARSeq OCR pipeline")
-            
-        except ImportError:
-            raise ImportError(
-                "DeepSolo/PARSeq required. Install detectron2/adet and strhub."
+        from adet.config import get_cfg
+        from detectron2.engine import DefaultPredictor
+        
+        cfg = get_cfg()
+        
+        # Use configurable paths instead of hardcoded
+        config_file = self.deepsolo_config or \
+            "configs/DeepSolo/R_50/TotalText/finetune_150k.yaml"
+        weights_file = self.deepsolo_weights or \
+            "models/deepsolo_totaltext.pth"
+        
+        if not os.path.exists(config_file):
+            raise FileNotFoundError(
+                f"DeepSolo config not found: {config_file}"
             )
+        
+        cfg.merge_from_file(config_file)
+        cfg.MODEL.WEIGHTS = weights_file
+        cfg.MODEL.DEVICE = self.device
+        self._detector_model = DefaultPredictor(cfg)
+        
+        # Load PARSeq
+        import torch
+        self._recognizer_model = torch.hub.load(
+            'baudm/parseq', 'parseq', pretrained=True
+        ).eval().to(self.device)
+        self._ocr_engine = "deepsolo_parseq"
+        logger.info("Loaded DeepSolo + PARSeq OCR pipeline")
+
+    def _load_easyocr(self):
+        """Load EasyOCR as fallback."""
+        import easyocr
+        self._reader = easyocr.Reader(
+            ['en'], gpu=(self.device == "cuda")
+        )
+        self._ocr_engine = "easyocr"
+        logger.info("Loaded EasyOCR as OCR engine")
 
     def extract_text(self, image: np.ndarray) -> List[Dict]:
         """
@@ -94,14 +132,15 @@ class OCRExtractor:
         """
         self._load_engine()
 
-        if self._ocr_engine is None:
+        if self._ocr_engine == "deepsolo_parseq":
+            return self._extract_deepsolo_parseq(image)
+        elif self._ocr_engine == "easyocr":
+            return self._extract_easyocr(image)
+        else:
             return []
-
-        return self._extract_deepsolo_parseq(image)
 
     def _extract_deepsolo_parseq(self, image: np.ndarray) -> List[Dict]:
         """Extract text using DeepSolo detection + PARSeq recognition."""
-        # Detection with DeepSolo
         outputs = self._detector_model(image)
         instances = outputs["instances"]
         
@@ -150,6 +189,27 @@ class OCRExtractor:
             preds, confidences = self._recognizer_model.tokenizer.decode(probs)
         
         return preds[0], confidences[0].mean().item()
+
+    def _extract_easyocr(self, image: np.ndarray) -> List[Dict]:
+        """Extract text using EasyOCR."""
+        # EasyOCR expects BGR or RGB numpy array
+        results = self._reader.readtext(image)
+        
+        extracted = []
+        for (bbox, text, confidence) in results:
+            if confidence < self.recognition_confidence:
+                continue
+            # bbox is a list of 4 corner points, convert to [x1,y1,x2,y2]
+            xs = [p[0] for p in bbox]
+            ys = [p[1] for p in bbox]
+            extracted.append({
+                "text": text,
+                "confidence": confidence,
+                "bbox": [int(min(xs)), int(min(ys)), 
+                         int(max(xs)), int(max(ys))],
+            })
+        
+        return extracted
 
     def extract_text_from_keyframes(
         self, 
