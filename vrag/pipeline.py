@@ -298,13 +298,32 @@ class VRAGPipeline:
                             ]
                             for model, feat_list in features.items()
                         }
+                    # Try to load OCR data from disk
+                    ocr_data = {}
+                    ocr_file = os.path.join(output_dir, "ocr.json")
+                    if os.path.exists(ocr_file):
+                        with open(ocr_file, "r") as f:
+                            ocr_data = _json.load(f)
+                        logger.info(f"[{vid}] Loaded OCR data: {len(ocr_data)} shots")
+
+                    # Try to load transcript data from disk
+                    transcript_data = {"text": "", "segments": []}
+                    transcript_file = os.path.join(output_dir, "transcript.json")
+                    if os.path.exists(transcript_file):
+                        with open(transcript_file, "r") as f:
+                            transcript_data = _json.load(f)
+                        logger.info(
+                            f"[{vid}] Loaded transcript: "
+                            f"{len(transcript_data.get('segments', []))} segments"
+                        )
+
                     all_preprocessed.append({
                         "video_id": vid,
                         "shots": loaded_shots,
                         "features": features,
                         "metadata": metadata,
-                        "ocr": {},
-                        "transcript": {"text": "", "segments": []},
+                        "ocr": ocr_data,
+                        "transcript": transcript_data,
                         "objects": {},
                     })
             else:
@@ -696,6 +715,7 @@ class VRAGPipeline:
         with open(os.path.join(feat_dir, "metadata.json"), "w") as f:
             _json.dump(metadata_per_model, f)
 
+
         total_shots = max(
             (len(m) for m in metadata_per_model.values()), default=0
         )
@@ -720,6 +740,9 @@ class VRAGPipeline:
                 if text:
                     ocr_data[shot.shot_id] = text
             results["ocr"] = ocr_data
+            # Save OCR data to disk for reloading
+            with open(os.path.join(output_dir, "ocr.json"), "w") as f:
+                _json.dump({str(k): v for k, v in ocr_data.items()}, f)
             logger.info(
                 f"[{video_id}] OCR extracted for {len(ocr_data)} shots"
             )
@@ -738,6 +761,9 @@ class VRAGPipeline:
             )
             transcript = transcriber.transcribe_video(video_path)
             results["transcript"] = transcript
+            # Save transcript to disk for reloading
+            with open(os.path.join(output_dir, "transcript.json"), "w") as f:
+                _json.dump(transcript, f, ensure_ascii=False)
             logger.info(
                 f"[{video_id}] Transcribed "
                 f"{len(transcript.get('segments', []))} segments"

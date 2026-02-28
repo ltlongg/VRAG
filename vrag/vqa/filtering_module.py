@@ -101,8 +101,11 @@ class FilteringModule:
             self._model_type = "videollama"
             logger.info("VideoLLaMA3 loaded successfully")
 
-        except ImportError:
-            raise ImportError("Install transformers: pip install transformers")
+        except ImportError as e:
+            raise ImportError(
+                f"Missing dependency for VideoLLaMA3: {e}. "
+                f"Try: pip install transformers decord"
+            )
 
     def filter_video(
         self,
