@@ -167,19 +167,14 @@ for r in results:
     print(f"Video: {r['video_id']}, Shot: {r['shot_id']}, Score: {r.get('score', 0)}")
 
 # VQA: Answer a question about a video (returns VRAGResult)
+# End-to-end: auto-preprocesses and builds index if not already done
 result = pipeline.run_vqa(
     query="How many people are in the meeting room?",
     video_path="data/videos/sample.mp4",
 )
-print(result.answer)
-print(result.confidence)
+print(result.answer)        # Generated answer
+print(result.confidence)    # Confidence score
 print(result.sources)       # Per-chunk source references
-
-# End-to-end: auto-preprocesses and builds index if not already done
-result = pipeline.run_vqa(
-    query="What is happening in this scene?",
-    video_path="data/videos/new_video.mp4",
-)
 ```
 
 ## Key Models
