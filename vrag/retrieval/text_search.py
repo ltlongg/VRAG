@@ -66,6 +66,10 @@ class TextSearch:
 
     def _build_bm25_index(self):
         """Build BM25 index over OCR text."""
+        if not self._corpus:
+            logger.warning("No OCR text found, skipping BM25 index")
+            return
+
         try:
             from rank_bm25 import BM25Okapi
         except ImportError:

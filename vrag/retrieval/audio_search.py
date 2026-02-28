@@ -66,6 +66,10 @@ class AudioSearch:
 
     def _build_bm25_index(self):
         """Build BM25 index."""
+        if not self._corpus:
+            logger.warning("No audio transcripts found, skipping BM25 index")
+            return
+
         try:
             from rank_bm25 import BM25Okapi
         except ImportError:
