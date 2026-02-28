@@ -58,6 +58,8 @@ VRAG/
 │   ├── preprocess_videos.py       # Batch video preprocessing
 │   ├── build_index.py             # Build FAISS search indices
 │   └── run_vrag.py                # Run KIS/VQA queries
+├── tests/
+│   └── test_smoke.py              # Smoke tests
 ├── requirements.txt
 ├── setup.py
 └── README.md
@@ -83,21 +85,22 @@ Edit `config/config.yaml` to set paths and model preferences:
 ```yaml
 general:
   device: "cuda"  # or "cpu"
-  output_dir: "output"
+  output_dir: "./output"
 
 dataset:
-  video_dir: "data/videos"
+  video_dir: "./data/videos"
+  keyframe_dir: "./data/keyframes"
+  features_dir: "./data/features"
+  index_dir: "./data/index"
 ```
 
-Set your Kimi API key for query decomposition:
+**Kimi API Key** (for query decomposition): The default API key is already configured in `config/config.yaml` under `vqa.query_decomposer.api_key`. You can override it via the `KIMI_API_KEY` environment variable:
+
 ```bash
 set KIMI_API_KEY=your-api-key-here
 ```
 
-Install the Anthropic SDK (Kimi uses an Anthropic-compatible API):
-```bash
-pip install anthropic
-```
+> **Note:** The Kimi API uses an Anthropic-compatible SDK (`anthropic` package), which is already included in `requirements.txt`.
 
 ### 3. Preprocess Videos
 
@@ -110,12 +113,19 @@ python scripts/preprocess_videos.py --video_dir data/videos --output_dir output/
 
 # Skip already processed videos
 python scripts/preprocess_videos.py --video_dir data/videos --skip_existing
+
+# Custom config
+python scripts/preprocess_videos.py --video path/to/video.mp4 --config config/config.yaml
 ```
 
 ### 4. Build Search Indices
 
 ```bash
+# Build indices from preprocessed data
 python scripts/build_index.py --data_dir output/ --index_dir data/indices
+
+# Specify FAISS index type
+python scripts/build_index.py --data_dir output/ --index_type Flat
 ```
 
 ### 5. Run Queries
@@ -124,14 +134,17 @@ python scripts/build_index.py --data_dir output/ --index_dir data/indices
 # Known-Item Search (KIS)
 python scripts/run_vrag.py --task kis --query "a person riding a bicycle near a lake"
 
-# Video Question Answering (VQA) 
-python scripts/run_vrag.py --task vqa --query "What color is the car in the video?"
+# Video Question Answering (VQA) — requires --video
+python scripts/run_vrag.py --task vqa --query "What color is the car?" --video data/videos/sample.mp4
 
 # Interactive mode
 python scripts/run_vrag.py --interactive
 
 # Batch queries from JSON file
 python scripts/run_vrag.py --queries_file queries.json --output_file results.json
+
+# Additional options
+python scripts/run_vrag.py --task kis --query "..." --top_n 200 --top_k 20 --config config/config.yaml
 ```
 
 ## Pipeline Usage (Python API)
@@ -143,20 +156,30 @@ from vrag.pipeline import VRAGPipeline
 pipeline = VRAGPipeline(config_path="config/config.yaml")
 pipeline.initialize(modules=["retrieval", "reranking", "vqa", "indexing"])
 
-# KIS: Find a specific video segment
+# KIS: Find a specific video segment (returns List[Dict])
 results = pipeline.run_kis(
     query="a dog playing in the snow",
     top_n=100,
     top_k=10,
 )
+# Each result has: video_id, shot_id, score, segment_info
+for r in results:
+    print(f"Video: {r['video_id']}, Shot: {r['shot_id']}, Score: {r.get('score', 0)}")
 
-# VQA: Answer a question about a video
+# VQA: Answer a question about a video (returns VRAGResult)
 result = pipeline.run_vqa(
     query="How many people are in the meeting room?",
     video_path="data/videos/sample.mp4",
 )
 print(result.answer)
 print(result.confidence)
+print(result.sources)       # Per-chunk source references
+
+# End-to-end: auto-preprocesses and builds index if not already done
+result = pipeline.run_vqa(
+    query="What is happening in this scene?",
+    video_path="data/videos/new_video.mp4",
+)
 ```
 
 ## Key Models
@@ -165,7 +188,7 @@ print(result.confidence)
 |-----------|-------|-------------------|
 | Semantic Retrieval | CLIP ViT-L-14 + BLIP-2 + BEiT-3 + InternVL-G | Late fusion at shot level |
 | OCR | DeepSolo + PARSeq | On-screen text extraction |
-| Audio | Whisper | Speech transcription |
+| Audio | Whisper large-v3 | Speech transcription |
 | Object Detection | Co-DETR | Object-based filtering |
 | Re-ranking | InternVL2.5-78B | 40.5/45 KIS score |
 | VQA Filtering | VideoLLaMA3-7B | Binary relevance decisions |
