@@ -43,12 +43,12 @@ class FilteringModule:
     3. Relevant chunks are passed to the Answering Module
     
     Best configuration from paper: chunk_size=15s, VideoLLaMA3-7B
-    Lightest: VideoLLaMA3-2B used here.
+    Lightweight config: VideoLLaMA3-2B used here for fast inference.
     """
 
     def __init__(
         self,
-        mllm_model: str = "DAMO-NLP-SG/VideoLLaMA3-7B",
+        mllm_model: str = "DAMO-NLP-SG/VideoLLaMA3-2B",
         chunk_size: float = 15.0,
         chunk_overlap: float = 5.0,
         max_frames_per_chunk: int = 16,
@@ -87,6 +87,10 @@ class FilteringModule:
             if "/" not in model_path:
                 model_path = f"DAMO-NLP-SG/{model_path}"
             logger.info(f"Loading VideoLLaMA3: {model_path}")
+            logger.warning(
+                "Loading model with trust_remote_code=True. "
+                "Only use models from trusted sources in production."
+            )
 
             self._processor = AutoProcessor.from_pretrained(
                 model_path, trust_remote_code=True
@@ -163,7 +167,7 @@ class FilteringModule:
                     num_frames=self.max_frames_per_chunk,
                 )
                 frames = frames_to_pil_images(raw_frames)
-            except Exception as e:
+            except (OSError, RuntimeError) as e:
                 logger.warning(f"Failed to extract frames for chunk {i}: {e}")
                 continue
 
@@ -276,7 +280,7 @@ class FilteringModule:
         """
         try:
             return self._assess_mllm(query, frames)
-        except Exception as e:
+        except (RuntimeError, ValueError) as e:
             logger.warning(f"Relevance assessment failed: {e}")
             return False, 0.0
 
@@ -339,6 +343,6 @@ class FilteringModule:
                 output[0][input_len:], skip_special_tokens=True
             )
             return response
-        except Exception as e:
+        except (RuntimeError, ValueError, AttributeError) as e:
             logger.warning(f"VideoLLaMA3 inference failed: {e}")
             return ""

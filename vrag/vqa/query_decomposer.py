@@ -9,6 +9,7 @@ retrieval and question isolates the specific question to be answered."
 Uses Kimi coding (Anthropic-compatible API) as the LLM backend.
 """
 
+import getpass
 import json
 import logging
 import os
@@ -63,17 +64,28 @@ class QueryDecomposer:
             temperature: Sampling temperature.
         """
         self.model = model
-        self.api_key = api_key or os.environ.get(
-            "KIMI_API_KEY",
-            "sk-kimi-B2k7ZUdzhJQaXUnVl1KEmc9czAGzw09jwrHLqKxTbdDSO4h4ZrVhlYn6nL6xvnGS"
-        )
+        self.api_key = api_key or os.environ.get("KIMI_API_KEY")
+        if not self.api_key:
+            try:
+                self.api_key = getpass.getpass(
+                    "\n🔑 Nhập KIMI API Key (hoặc đặt env var KIMI_API_KEY): "
+                )
+            except (EOFError, KeyboardInterrupt):
+                logger.warning("No API key provided. LLM decomposition will be disabled.")
+                self.api_key = None
         self.api_base = api_base
         self.temperature = temperature
+        self.timeout = 30.0  # seconds
         self._client = None
 
     def _init_client(self):
         """Initialize the Kimi (Anthropic-compatible) client."""
         if self._client is not None:
+            return
+
+        if not self.api_key:
+            logger.warning("No API key available. Using rule-based decomposition.")
+            self._client_type = "rule_based"
             return
 
         try:
@@ -82,6 +94,7 @@ class QueryDecomposer:
             self._client = Anthropic(
                 api_key=self.api_key,
                 base_url=self.api_base,
+                timeout=self.timeout,
             )
             self._client_type = "kimi"
             logger.info(f"Initialized Kimi client with model: {self.model}")

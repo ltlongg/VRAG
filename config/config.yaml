@@ -1,6 +1,6 @@
 # =============================================================================
 # VRAG: Retrieval-Augmented Video Question Answering for Long-Form Videos
-# Configuration File — Best Models (Paper Optimal, for A100/H100)
+# Configuration File — Lightweight Models (for consumer GPUs, 8-24GB VRAM)
 # =============================================================================
 
 # --- General Settings ---
@@ -36,21 +36,21 @@ preprocessing:
     max_keyframes_per_shot: 5
     min_keyframes_per_shot: 1
 
-  # Feature extraction models — BEST versions from paper
+  # Feature extraction models — LIGHTWEIGHT versions
   feature_extraction:
     clip:
-      model_name: "ViT-L-14"         # Paper: CLIP ViT-L-14 (768-dim)
+      model_name: "ViT-B-32"            # Lightweight: CLIP ViT-B-32 (512-dim)
       pretrained: "openai"
-      batch_size: 32
+      batch_size: 64
     blip2:
-      model_name: "Salesforce/blip2-opt-2.7b"  # Paper: BLIP-2
+      model_name: "Salesforce/blip2-opt-2.7b"  # Paper: BLIP-2 (already small)
       batch_size: 16
     beit3:
-      model_name: "microsoft/beit-base-patch16-224"  # Paper: BEiT-3
+      model_name: "microsoft/beit-base-patch16-224"  # Paper: BEiT-3 (already smallest)
       batch_size: 32
     internvl:
-      model_name: "OpenGVLab/InternVL2-8B"  # Paper: InternVL-G (8B closest HF)
-      batch_size: 4
+      model_name: "OpenGVLab/InternVL2-1B"  # Lightweight: InternVL2-1B
+      batch_size: 8
 
   # OCR extraction
   ocr:
@@ -61,9 +61,9 @@ preprocessing:
     deepsolo_config: null
     deepsolo_weights: null
 
-  # Audio transcription — BEST Whisper
+  # Audio transcription — LIGHTWEIGHT Whisper
   audio:
-    model_name: "openai/whisper-large-v3"  # Paper: Whisper large-v3
+    model_name: "openai/whisper-small"  # Lightweight: Whisper small (~244M params)
     language: null
     batch_size: 16
 
@@ -107,9 +107,9 @@ retrieval:
 reranking:
   enabled: true
   context_window: 3  # ±3 shots (paper optimal)
-  # BEST MLLM for re-ranking: InternVL2.5-78B (paper: 40.5/45 KIS score)
+  # Lightweight MLLM for re-ranking: InternVL2.5-1B (~2GB VRAM)
   mllm:
-    model_name: "OpenGVLab/InternVL2_5-78B"
+    model_name: "OpenGVLab/InternVL2_5-1B"
     max_frames_per_segment: 16
     score_scale: [0, 1]
   top_k: 10
@@ -119,21 +119,21 @@ vqa:
   # Query decomposition (Kimi coding via Anthropic-compatible API)
   query_decomposer:
     model: "kimi-for-coding"
-    api_key: "sk-kimi-B2k7ZUdzhJQaXUnVl1KEmc9czAGzw09jwrHLqKxTbdDSO4h4ZrVhlYn6nL6xvnGS"
+    api_key: "${KIMI_API_KEY}"
     api_base: "https://api.kimi.com/coding/"
 
-  # Filtering module — BEST: VideoLLaMA3-7B (paper optimal)
+  # Filtering module — Lightweight: VideoLLaMA3-2B
   filtering:
     chunk_size_seconds: 15  # Paper: 15s best
     chunk_overlap_seconds: 5
     mllm:
-      model_name: "DAMO-NLP-SG/VideoLLaMA3-7B"
+      model_name: "DAMO-NLP-SG/VideoLLaMA3-2B"
       max_frames_per_chunk: 16
 
-  # Answering module — BEST: VideoLLaMA3-7B (paper: 4/5 VQA score)
+  # Answering module — Lightweight: VideoLLaMA3-2B
   answering:
     mllm:
-      model_name: "DAMO-NLP-SG/VideoLLaMA3-7B"
+      model_name: "DAMO-NLP-SG/VideoLLaMA3-2B"
       max_frames: 32
       max_new_tokens: 512
       temperature: 0.1
@@ -146,7 +146,7 @@ indexing:
     nlist: 256
     nprobe: 32
     metric: "cosine"
-  dimension: 768
+  dimension: 512  # Updated for ViT-B-32 (512-dim vs ViT-L-14's 768-dim)
 
 # --- Evaluation ---
 evaluation:

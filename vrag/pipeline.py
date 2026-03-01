@@ -23,6 +23,9 @@ from vrag.utils.video_utils import (
 
 logger = logging.getLogger(__name__)
 
+# Supported video file extensions
+SUPPORTED_VIDEO_EXTENSIONS = ["mp4", "avi", "mkv", "mov", "webm"]
+
 
 class VRAGPipeline:
     """
@@ -157,7 +160,7 @@ class VRAGPipeline:
 
         mllm_cfg = rr_cfg.get("mllm", {})
         self._modules["reranker"] = Reranker(
-            mllm_model=mllm_cfg.get("model_name", "InternVL2.5-8B"),
+            mllm_model=mllm_cfg.get("model_name", "InternVL2_5-1B"),
             context_window=rr_cfg.get("context_window", 3),
             top_k=rr_cfg.get("top_k", 10),
             max_frames_per_segment=mllm_cfg.get("max_frames_per_segment", 16),
@@ -182,7 +185,7 @@ class VRAGPipeline:
 
         filt_mllm_cfg = filt_cfg.get("mllm", {})
         self._modules["filtering"] = FilteringModule(
-            mllm_model=filt_mllm_cfg.get("model_name", "VideoLLaMA3-7B"),
+            mllm_model=filt_mllm_cfg.get("model_name", "VideoLLaMA3-2B"),
             chunk_size=filt_cfg.get("chunk_size_seconds", 15.0),
             chunk_overlap=filt_cfg.get("chunk_overlap_seconds", 5.0),
             max_frames_per_chunk=filt_mllm_cfg.get("max_frames_per_chunk", 8),
@@ -190,7 +193,7 @@ class VRAGPipeline:
 
         ans_mllm_cfg = ans_cfg.get("mllm", {})
         self._modules["answering"] = AnsweringModule(
-            mllm_model=ans_mllm_cfg.get("model_name", "VideoLLaMA3-7B"),
+            mllm_model=ans_mllm_cfg.get("model_name", "VideoLLaMA3-2B"),
             max_frames=ans_mllm_cfg.get("max_frames", 32),
         )
 
@@ -224,7 +227,7 @@ class VRAGPipeline:
             video_paths.append(video_path)
         if video_dir and os.path.isdir(video_dir):
             import glob
-            for ext in ["mp4", "avi", "mkv", "mov", "webm"]:
+            for ext in SUPPORTED_VIDEO_EXTENSIONS:
                 video_paths.extend(glob.glob(os.path.join(video_dir, f"*.{ext}")))
             video_paths = sorted(set(video_paths))
 
@@ -256,76 +259,11 @@ class VRAGPipeline:
             )
 
             # Check if preprocessing output already exists on disk
-            shots_file = os.path.join(output_dir, "shots.json")
-            if os.path.exists(shots_file):
-                logger.info(f"[{vid}] Loading existing preprocessed data from {output_dir}")
-                loaded_shots = load_shots(shots_file)
-                shots_data[vid] = loaded_shots
-
-                # Try to load features for index building
-                feat_dir = os.path.join(output_dir, "features")
-                if os.path.isdir(feat_dir):
-                    import numpy as np
-                    import json as _json
-                    features = {}
-                    num_vectors = 0
-                    for feat_file in Path(feat_dir).glob("*.npy"):
-                        feat_array = np.load(str(feat_file))
-                        features[feat_file.stem] = list(feat_array)
-                        num_vectors = max(num_vectors, len(feat_array))
-
-                    # Prefer saved metadata file for exact alignment
-                    meta_file = os.path.join(feat_dir, "metadata.json")
-                    if os.path.exists(meta_file):
-                        with open(meta_file, "r") as mf:
-                            raw_metadata = _json.load(mf)
-                        if isinstance(raw_metadata, list):
-                            # Legacy flat list: replicate for each model,
-                            # capped to that model's feature count
-                            metadata = {
-                                model: raw_metadata[:len(feat_list)]
-                                for model, feat_list in features.items()
-                            }
-                        else:
-                            # Per-model dict (new format)
-                            metadata = raw_metadata
-                    else:
-                        # Fallback: derive from shot list, capped to feature count
-                        metadata = {
-                            model: [
-                                {"video_id": vid, "shot_id": s.shot_id}
-                                for s in loaded_shots[:len(feat_list)]
-                            ]
-                            for model, feat_list in features.items()
-                        }
-                    # Try to load OCR data from disk
-                    ocr_data = {}
-                    ocr_file = os.path.join(output_dir, "ocr.json")
-                    if os.path.exists(ocr_file):
-                        with open(ocr_file, "r") as f:
-                            ocr_data = _json.load(f)
-                        logger.info(f"[{vid}] Loaded OCR data: {len(ocr_data)} shots")
-
-                    # Try to load transcript data from disk
-                    transcript_data = {"text": "", "segments": []}
-                    transcript_file = os.path.join(output_dir, "transcript.json")
-                    if os.path.exists(transcript_file):
-                        with open(transcript_file, "r") as f:
-                            transcript_data = _json.load(f)
-                        logger.info(
-                            f"[{vid}] Loaded transcript: "
-                            f"{len(transcript_data.get('segments', []))} segments"
-                        )
-
-                    all_preprocessed.append({
-                        "video_id": vid,
-                        "shots": loaded_shots,
-                        "features": features,
-                        "metadata": metadata,
-                        "ocr": ocr_data,
-                        "transcript": transcript_data,
-                        "objects": {},
-                    })
+            existing = self._load_existing_preprocessed_data(
+                vid, output_dir, shots_data
+            )
+            if existing:
+                all_preprocessed.append(existing)
             else:
                 logger.info(f"[{vid}] Auto-preprocessing video: {vp}")
                 result = self.preprocess_video(video_path=vp, output_dir=output_dir)
@@ -338,6 +276,87 @@ class VRAGPipeline:
             self.build_indices(preprocessed_data=all_preprocessed, save=True)
 
         return shots_data
+
+    def _load_existing_preprocessed_data(
+        self,
+        vid: str,
+        output_dir: str,
+        shots_data: Dict[str, List[Shot]],
+    ) -> Dict:
+        """
+        Load existing preprocessed data from disk for a single video.
+
+        Returns:
+            Dict with preprocessed data, or empty dict if not found.
+        """
+        import numpy as np
+        import json as _json
+
+        shots_file = os.path.join(output_dir, "shots.json")
+        if not os.path.exists(shots_file):
+            return {}
+
+        logger.info(f"[{vid}] Loading existing preprocessed data from {output_dir}")
+        loaded_shots = load_shots(shots_file)
+        shots_data[vid] = loaded_shots
+
+        # Load features
+        features = {}
+        metadata = {}
+        feat_dir = os.path.join(output_dir, "features")
+        if os.path.isdir(feat_dir):
+            for feat_file in Path(feat_dir).glob("*.npy"):
+                feat_array = np.load(str(feat_file))
+                features[feat_file.stem] = list(feat_array)
+
+            meta_file = os.path.join(feat_dir, "metadata.json")
+            if os.path.exists(meta_file):
+                with open(meta_file, "r") as mf:
+                    raw_metadata = _json.load(mf)
+                if isinstance(raw_metadata, list):
+                    metadata = {
+                        model: raw_metadata[:len(feat_list)]
+                        for model, feat_list in features.items()
+                    }
+                else:
+                    metadata = raw_metadata
+            else:
+                metadata = {
+                    model: [
+                        {"video_id": vid, "shot_id": s.shot_id}
+                        for s in loaded_shots[:len(feat_list)]
+                    ]
+                    for model, feat_list in features.items()
+                }
+
+        # Load OCR data
+        ocr_data = {}
+        ocr_file = os.path.join(output_dir, "ocr.json")
+        if os.path.exists(ocr_file):
+            with open(ocr_file, "r") as f:
+                ocr_data = _json.load(f)
+            logger.info(f"[{vid}] Loaded OCR data: {len(ocr_data)} shots")
+
+        # Load transcript data
+        transcript_data = {"text": "", "segments": []}
+        transcript_file = os.path.join(output_dir, "transcript.json")
+        if os.path.exists(transcript_file):
+            with open(transcript_file, "r") as f:
+                transcript_data = _json.load(f)
+            logger.info(
+                f"[{vid}] Loaded transcript: "
+                f"{len(transcript_data.get('segments', []))} segments"
+            )
+
+        return {
+            "video_id": vid,
+            "shots": loaded_shots,
+            "features": features,
+            "metadata": metadata,
+            "ocr": ocr_data,
+            "transcript": transcript_data,
+            "objects": {},
+        }
 
     # ========== KIS Task ==========
 
@@ -671,14 +690,16 @@ class VRAGPipeline:
         features_per_model = {}
         metadata_per_model = {}  # per-model metadata to stay aligned with features
 
+        from PIL import Image
+        import numpy as np
+
         for shot in shots:
             if shot.keyframe_paths:
-                from PIL import Image
                 images = []
                 for p in shot.keyframe_paths:
                     try:
                         images.append(Image.open(p).convert("RGB"))
-                    except Exception:
+                    except (OSError, IOError):
                         pass
 
                 if images:
@@ -695,7 +716,6 @@ class VRAGPipeline:
                                 features_per_model[model_name] = []
                                 metadata_per_model[model_name] = []
                             # Average features across keyframes for shot-level representation
-                            import numpy as np
                             avg_feat = np.mean(feats, axis=0)
                             features_per_model[model_name].append(avg_feat)
                             metadata_per_model[model_name].append(meta_entry)
@@ -704,7 +724,6 @@ class VRAGPipeline:
         results["metadata"] = metadata_per_model
 
         # Save features and per-model metadata
-        import numpy as np
         import json as _json
         feat_dir = os.path.join(output_dir, "features")
         os.makedirs(feat_dir, exist_ok=True)
@@ -746,7 +765,7 @@ class VRAGPipeline:
             logger.info(
                 f"[{video_id}] OCR extracted for {len(ocr_data)} shots"
             )
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             logger.warning(f"[{video_id}] OCR failed: {e}")
             results["ocr"] = {}
 
@@ -755,7 +774,7 @@ class VRAGPipeline:
         try:
             audio_cfg = pp_cfg.get("audio", {})
             transcriber = AudioTranscriber(
-                model_name=audio_cfg.get("model_name", "openai/whisper-large-v3"),
+                model_name=audio_cfg.get("model_name", "openai/whisper-small"),
                 language=audio_cfg.get("language"),
                 batch_size=audio_cfg.get("batch_size", 16),
             )
@@ -768,7 +787,7 @@ class VRAGPipeline:
                 f"[{video_id}] Transcribed "
                 f"{len(transcript.get('segments', []))} segments"
             )
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             logger.warning(f"[{video_id}] Transcription failed: {e}")
             results["transcript"] = {"text": "", "segments": []}
 
@@ -790,7 +809,7 @@ class VRAGPipeline:
             logger.info(
                 f"[{video_id}] Objects detected in {len(object_data)} shots"
             )
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             logger.warning(f"[{video_id}] Object detection failed: {e}")
             results["objects"] = {}
 

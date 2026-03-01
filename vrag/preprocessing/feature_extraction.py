@@ -40,7 +40,7 @@ class FeatureExtractor:
 
     def load_clip(
         self,
-        model_name: str = "ViT-L-14",
+        model_name: str = "ViT-B-32",
         pretrained: str = "openai",
     ):
         """Load OpenCLIP model."""
@@ -205,7 +205,7 @@ class FeatureExtractor:
     # InternVL Feature Extraction
     # =========================================================================
 
-    def load_internvl(self, model_name: str = "OpenGVLab/InternVL2-8B"):
+    def load_internvl(self, model_name: str = "OpenGVLab/InternVL2-1B"):
         """
         Load InternVL2 model for vision-language feature extraction.
         Uses the vision encoder component to extract image features.

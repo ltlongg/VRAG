@@ -25,7 +25,7 @@ class AudioTranscriber:
 
     def __init__(
         self,
-        model_name: str = "openai/whisper-large-v3",
+        model_name: str = "openai/whisper-small",
         language: Optional[str] = None,
         device: str = "cuda",
         batch_size: int = 16,

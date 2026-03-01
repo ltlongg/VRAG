@@ -44,11 +44,11 @@ VRAG/
 │   │   ├── temporal_search.py     # Temporal constraint search
 │   │   └── multimodal_retrieval.py # Unified multi-modal retrieval
 │   ├── reranking/
-│   │   └── reranker.py            # MLLM re-ranking (InternVL2.5-78B)
+│   │   └── reranker.py            # MLLM re-ranking (InternVL2.5-1B)
 │   ├── vqa/
 │   │   ├── query_decomposer.py    # Query decomposition (Kimi Coding)
 │   │   ├── filtering_module.py    # Chunk-level relevance filtering
-│   │   └── answering_module.py    # Answer generation (VideoLLaMA3-7B)
+│   │   └── answering_module.py    # Answer generation (VideoLLaMA3-2B)
 │   ├── indexing/
 │   │   └── index_builder.py       # FAISS vector index manager
 │   └── utils/
@@ -94,7 +94,7 @@ dataset:
   index_dir: "./data/index"
 ```
 
-**Kimi API Key** (for query decomposition): The default API key is already configured in `config/config.yaml` under `vqa.query_decomposer.api_key`. You can override it via the `KIMI_API_KEY` environment variable:
+**Kimi API Key** (for query decomposition): Set the `KIMI_API_KEY` environment variable, or the system will prompt you at runtime:
 
 ```bash
 set KIMI_API_KEY=your-api-key-here
@@ -177,18 +177,18 @@ print(result.confidence)    # Confidence score
 print(result.sources)       # Per-chunk source references
 ```
 
-## Key Models
+## Key Models (Lightweight Config)
 
-| Component | Model | Paper Performance |
-|-----------|-------|-------------------|
-| Semantic Retrieval | CLIP ViT-L-14 + BLIP-2 + BEiT-3 + InternVL-G | Late fusion at shot level |
-| OCR | DeepSolo + PARSeq | On-screen text extraction |
-| Audio | Whisper large-v3 | Speech transcription |
-| Object Detection | Co-DETR | Object-based filtering |
-| Re-ranking | InternVL2.5-78B | 40.5/45 KIS score |
-| VQA Filtering | VideoLLaMA3-7B | Binary relevance decisions |
-| VQA Answering | VideoLLaMA3-7B | 4/5 VQA score |
-| Query Decomposition | Kimi Coding (Anthropic-compatible API) | retrieval_query + question |
+| Component | Model (Current) | Paper Best | Notes |
+|-----------|----------------|-----------|-------|
+| Semantic Retrieval | CLIP ViT-B-32 + BLIP-2 2.7B + BEiT-3 base + InternVL2-1B | ViT-L-14 + InternVL-G | Late fusion at shot level |
+| OCR | DeepSolo + PARSeq | Same | On-screen text extraction |
+| Audio | Whisper small (~244M) | Whisper large-v3 | Speech transcription |
+| Object Detection | Co-DETR | Same | Object-based filtering |
+| Re-ranking | InternVL2.5-1B (~2GB VRAM) | InternVL2.5-78B (40.5/45) | MLLM relevance scoring |
+| VQA Filtering | VideoLLaMA3-2B (~4GB VRAM) | VideoLLaMA3-7B | Binary relevance decisions |
+| VQA Answering | VideoLLaMA3-2B (~4GB VRAM) | VideoLLaMA3-7B (4/5 VQA) | Answer generation |
+| Query Decomposition | Kimi Coding API | Same | retrieval_query + question |
 
 ## Design Decisions from Paper
 

@@ -48,12 +48,12 @@ class Reranker:
     4. Rank by score descending, select top-K
     
     Best MLLM: InternVL2.5-78B achieved 40.5/45 in experiments.
-    Lightest: InternVL2.5-1B used here.
+    Lightweight config: InternVL2.5-1B used here for fast inference.
     """
 
     def __init__(
         self,
-        mllm_model: str = "OpenGVLab/InternVL2_5-78B",
+        mllm_model: str = "OpenGVLab/InternVL2_5-1B",
         context_window: int = 3,
         top_k: int = 10,
         max_frames_per_segment: int = 16,
@@ -95,6 +95,10 @@ class Reranker:
                 model_path = f"OpenGVLab/{model_path}"
 
             logger.info(f"Loading InternVL model: {model_path}")
+            logger.warning(
+                "Loading model with trust_remote_code=True. "
+                "Only use models from trusted sources in production."
+            )
 
             self._tokenizer = AutoTokenizer.from_pretrained(
                 model_path, trust_remote_code=True
@@ -262,7 +266,7 @@ class Reranker:
                 try:
                     img = Image.open(path).convert("RGB")
                     frames.append(img)
-                except Exception as e:
+                except (OSError, IOError) as e:
                     logger.warning(f"Failed to load keyframe: {path}: {e}")
         else:
             # Fall back to extracting from video file
@@ -302,7 +306,7 @@ class Reranker:
             return self._score_internvl(
                 RERANKING_PROMPT_TEMPLATE.format(query=query), frames
             )
-        except Exception as e:
+        except (RuntimeError, ValueError) as e:
             logger.warning(f"Scoring failed: {e}")
             return 0.0
 

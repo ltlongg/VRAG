@@ -121,16 +121,18 @@ def load_video(video_path: str) -> cv2.VideoCapture:
 def get_video_info(video_path: str) -> Dict:
     """Get video metadata (fps, frame count, duration, resolution)."""
     cap = load_video(video_path)
-    info = {
-        "path": video_path,
-        "fps": cap.get(cv2.CAP_PROP_FPS),
-        "frame_count": int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
-        "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-        "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-    }
-    info["duration"] = info["frame_count"] / info["fps"] if info["fps"] > 0 else 0
-    cap.release()
-    return info
+    try:
+        info = {
+            "path": video_path,
+            "fps": cap.get(cv2.CAP_PROP_FPS),
+            "frame_count": int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
+            "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+        }
+        info["duration"] = info["frame_count"] / info["fps"] if info["fps"] > 0 else 0
+        return info
+    finally:
+        cap.release()
 
 
 def extract_frames(
@@ -154,34 +156,35 @@ def extract_frames(
         List of BGR numpy arrays (OpenCV format).
     """
     cap = load_video(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    start_frame = int(start_time * fps)
-    if end_time is not None:
-        end_frame = min(int(end_time * fps), total_frames)
-    else:
-        end_frame = total_frames
+        start_frame = int(start_time * fps)
+        if end_time is not None:
+            end_frame = min(int(end_time * fps), total_frames)
+        else:
+            end_frame = total_frames
 
-    if end_frame <= start_frame:
+        if end_frame <= start_frame:
+            return []
+
+        # Uniformly sample frame indices
+        frame_indices = np.linspace(start_frame, end_frame - 1, num_frames, dtype=int)
+        frame_indices = np.unique(frame_indices)
+
+        frames = []
+        for idx in frame_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if ret:
+                if resize:
+                    frame = cv2.resize(frame, resize)
+                frames.append(frame)
+
+        return frames
+    finally:
         cap.release()
-        return []
-
-    # Uniformly sample frame indices
-    frame_indices = np.linspace(start_frame, end_frame - 1, num_frames, dtype=int)
-    frame_indices = np.unique(frame_indices)
-
-    frames = []
-    for idx in frame_indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-        ret, frame = cap.read()
-        if ret:
-            if resize:
-                frame = cv2.resize(frame, resize)
-            frames.append(frame)
-
-    cap.release()
-    return frames
 
 
 def extract_frames_at_indices(
@@ -191,16 +194,18 @@ def extract_frames_at_indices(
 ) -> List[np.ndarray]:
     """Extract specific frames by index."""
     cap = load_video(video_path)
-    frames = []
-    for idx in frame_indices:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-        ret, frame = cap.read()
-        if ret:
-            if resize:
-                frame = cv2.resize(frame, resize)
-            frames.append(frame)
-    cap.release()
-    return frames
+    try:
+        frames = []
+        for idx in frame_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret, frame = cap.read()
+            if ret:
+                if resize:
+                    frame = cv2.resize(frame, resize)
+                frames.append(frame)
+        return frames
+    finally:
+        cap.release()
 
 
 def save_keyframe(frame: np.ndarray, output_path: str) -> str:

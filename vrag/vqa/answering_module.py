@@ -38,12 +38,12 @@ class AnsweringModule:
     3. MLLM generates answer based on frames + question
     
     Best model from paper: VideoLLaMA3-7B achieved 4/5 VQA score
-    Lightest: VideoLLaMA3-2B used here.
+    Lightweight config: VideoLLaMA3-2B used here for fast inference.
     """
 
     def __init__(
         self,
-        mllm_model: str = "DAMO-NLP-SG/VideoLLaMA3-7B",
+        mllm_model: str = "DAMO-NLP-SG/VideoLLaMA3-2B",
         max_frames: int = 32,
         max_chunks: int = 10,
     ):
@@ -76,6 +76,10 @@ class AnsweringModule:
             if "/" not in model_path:
                 model_path = f"DAMO-NLP-SG/{model_path}"
             logger.info(f"Loading VideoLLaMA3: {model_path}")
+            logger.warning(
+                "Loading model with trust_remote_code=True. "
+                "Only use models from trusted sources in production."
+            )
 
             self._processor = AutoProcessor.from_pretrained(
                 model_path, trust_remote_code=True
@@ -141,7 +145,7 @@ class AnsweringModule:
         # Generate answer
         try:
             answer = self._generate_answer(question, all_frames)
-        except Exception as e:
+        except (RuntimeError, ValueError) as e:
             logger.error(f"Answer generation failed: {e}")
             answer = f"Error generating answer: {str(e)}"
 
@@ -254,6 +258,6 @@ class AnsweringModule:
                 output[0][input_len:], skip_special_tokens=True
             )
             return response.strip()
-        except Exception as e:
+        except (RuntimeError, ValueError, AttributeError) as e:
             logger.error(f"VideoLLaMA3 generation failed: {e}")
             return f"Error: {str(e)}"

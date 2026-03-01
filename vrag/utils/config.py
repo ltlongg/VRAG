@@ -95,6 +95,32 @@ class Config:
         return f"Config({self.to_dict()})"
 
 
+EXPECTED_SECTIONS = [
+    "general", "preprocessing", "retrieval", "reranking", "vqa",
+    "indexing", "dataset",
+]
+
+
+def _validate_config(config_dict: Dict[str, Any]) -> List[str]:
+    """Validate config dict and return list of warnings."""
+    warnings = []
+
+    if not isinstance(config_dict, dict):
+        warnings.append("Config root must be a dict")
+        return warnings
+
+    for section in EXPECTED_SECTIONS:
+        if section not in config_dict:
+            warnings.append(f"Missing config section: '{section}'")
+
+    # Validate critical numeric values
+    general = config_dict.get("general", {})
+    if general and not isinstance(general, dict):
+        warnings.append("'general' section must be a dict")
+
+    return warnings
+
+
 def load_config(config_path: Optional[str] = None) -> Config:
     """
     Load configuration from a YAML file.
@@ -117,6 +143,12 @@ def load_config(config_path: Optional[str] = None) -> Config:
         raw_config = yaml.safe_load(f)
 
     resolved = _resolve_config(raw_config)
+
+    # Validate config
+    validation_warnings = _validate_config(resolved)
+    for w in validation_warnings:
+        logger.warning(f"Config validation: {w}")
+
     config = Config(resolved)
 
     logger.info(f"Configuration loaded from {config_path}")

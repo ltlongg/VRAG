@@ -1,1 +1,3 @@
-"""VRAG Re-ranking Module"""
+from vrag.reranking.reranker import Reranker
+
+__all__ = ["Reranker"]
