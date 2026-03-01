@@ -7,8 +7,12 @@ Supports PySceneDetect and TransNetV2 backends.
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+# Force FFmpeg software decoding before importing cv2.
+os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "hwaccel;none")
 
 import cv2
 import numpy as np
@@ -84,17 +88,27 @@ class ShotBoundaryDetector:
         return shots
 
     def _detect_pyscenedetect(self, video_path: str) -> List[Tuple[int, int]]:
-        """Detect scenes using PySceneDetect (ContentDetector)."""
+        """Detect scenes using PySceneDetect (ContentDetector).
+
+        Uses ``open_video`` with the ``opencv`` backend and forces
+        the FFmpeg capture API so that software AV1 decoding is used.
+        """
         try:
             from scenedetect import detect, ContentDetector
+            from scenedetect import open_video
         except ImportError:
             raise ImportError(
                 "PySceneDetect is required. Install it with: "
                 "pip install scenedetect[opencv]"
             )
 
+        # Open the video with explicit opencv backend so that the
+        # OPENCV_FFMPEG_CAPTURE_OPTIONS env-var takes effect and
+        # hardware AV1 decoding is bypassed.
+        video = open_video(video_path, backend="opencv")
+
         scene_list = detect(
-            video_path,
+            video,
             ContentDetector(
                 threshold=self.threshold,
                 min_scene_len=self.min_scene_len,
@@ -136,7 +150,7 @@ class ShotBoundaryDetector:
         Fallback: Detect scenes using histogram difference method.
         Simple but effective for basic shot boundary detection.
         """
-        cap = cv2.VideoCapture(video_path)
+        cap = cv2.VideoCapture(video_path, cv2.CAP_FFMPEG)
         if not cap.isOpened():
             raise FileNotFoundError(f"Cannot open video: {video_path}")
 

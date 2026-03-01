@@ -28,6 +28,11 @@ import os
 import sys
 import time
 
+# --- Force software decoding for AV1 (and other HW-accelerated codecs) ---
+# Must be set BEFORE cv2 / scenedetect are imported anywhere.
+os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "hwaccel;none")
+os.environ.setdefault("LIBVA_DRIVER_NAME", "none")
+
 # Add parent dir to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

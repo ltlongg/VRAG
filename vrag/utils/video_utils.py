@@ -6,6 +6,12 @@ and video segment operations used across all VRAG modules.
 """
 
 import os
+
+# Force FFmpeg to use software decoding (no hardware acceleration).
+# This fixes AV1 decoding errors on platforms without HW AV1 support.
+os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "hwaccel;none")
+os.environ.setdefault("LIBVA_DRIVER_NAME", "none")
+
 import cv2
 import json
 import logging
@@ -111,8 +117,12 @@ class VRAGResult:
 # =============================================================================
 
 def load_video(video_path: str) -> cv2.VideoCapture:
-    """Load a video file and return the VideoCapture object."""
-    cap = cv2.VideoCapture(video_path)
+    """Load a video file and return the VideoCapture object.
+
+    Uses the FFmpeg backend explicitly to avoid hardware-accelerated
+    codec issues (e.g. AV1 on platforms without HW AV1 support).
+    """
+    cap = cv2.VideoCapture(video_path, cv2.CAP_FFMPEG)
     if not cap.isOpened():
         raise FileNotFoundError(f"Cannot open video: {video_path}")
     return cap
