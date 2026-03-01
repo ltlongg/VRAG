@@ -90,25 +90,19 @@ class ShotBoundaryDetector:
     def _detect_pyscenedetect(self, video_path: str) -> List[Tuple[int, int]]:
         """Detect scenes using PySceneDetect (ContentDetector).
 
-        Uses ``open_video`` with the ``opencv`` backend and forces
-        the FFmpeg capture API so that software AV1 decoding is used.
+        The OPENCV_FFMPEG_CAPTURE_OPTIONS env-var (set at module level)
+        forces software AV1 decoding when OpenCV opens the video.
         """
         try:
             from scenedetect import detect, ContentDetector
-            from scenedetect import open_video
         except ImportError:
             raise ImportError(
                 "PySceneDetect is required. Install it with: "
                 "pip install scenedetect[opencv]"
             )
 
-        # Open the video with explicit opencv backend so that the
-        # OPENCV_FFMPEG_CAPTURE_OPTIONS env-var takes effect and
-        # hardware AV1 decoding is bypassed.
-        video = open_video(video_path, backend="opencv")
-
         scene_list = detect(
-            video,
+            video_path,
             ContentDetector(
                 threshold=self.threshold,
                 min_scene_len=self.min_scene_len,
